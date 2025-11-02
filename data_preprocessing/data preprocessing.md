@@ -10,6 +10,15 @@ It performs a two-step lookup process:
 1. **SRS ID → OTU IDs**: Maps a sample ID to all its associated OTUs using `samples-otus-97.parquet`
 2. **OTU IDs → DNA sequences**: Retrieves the DNA sequence for each OTU using `otus_97_to_dna.parquet`
 
+### Prerequisites
+
+Before running the script, you need to download the required parquet files:
+
+1. Download the parquet files from this [public Google Drive folder](https://drive.google.com/drive/folders/1pB1tmbkAr_gIY-Cyec6lOuMWUgk8rLdq?usp=sharing)
+   - `samples-otus-97.parquet` (2.22 GB)
+   - `otus_97_to_dna.parquet` (75 MB)
+2. Place both files in the `mapref_data/` folder
+
 ### Usage
 
 ```bash
