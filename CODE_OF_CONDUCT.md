@@ -45,7 +45,6 @@ All reports are handled confidentially. You won't be required to confront anyone
 
 ### What Happens Next
 
-- We'll acknowledge your report within 48 hours
 - We'll investigate fairly and promptly
 - We'll protect your privacy throughout the process
 - We'll determine appropriate action based on severity
