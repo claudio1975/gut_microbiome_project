@@ -303,11 +303,32 @@ def ensure_embeddings_exist(
         
     Returns:
         Path to embeddings H5 file
+        
+    Raises:
+        FileNotFoundError: If the sample CSV file doesn't exist
     """
     if paths is None:
         paths = get_default_paths()
     
     embeddings_h5 = paths['embeddings_h5']
+    
+    # Convert to Path object if string
+    sample_csv_path = Path(sample_csv_path)
+    
+    # Validate CSV file exists before proceeding
+    if not sample_csv_path.exists():
+        # Try to resolve the path for better error message
+        try:
+            abs_path = sample_csv_path.resolve()
+        except (OSError, RuntimeError):
+            abs_path = Path.cwd() / sample_csv_path
+        
+        raise FileNotFoundError(
+            f"Sample CSV file not found: {sample_csv_path}\n"
+            f"  Resolved path: {abs_path}\n"
+            f"  Current directory: {Path.cwd()}\n"
+            f"  Please check the file path and ensure the file exists."
+        )
     
     # Load sample IDs from CSV
     labels_dict = load_labels(sample_csv_path)
@@ -389,8 +410,39 @@ def load_labels(
         
     Returns:
         Dictionary mapping SID -> label
+        
+    Raises:
+        FileNotFoundError: If the CSV file doesn't exist
+        ValueError: If the CSV file is empty or missing required columns
     """
-    df = pd.read_csv(labels_csv)
+    # Convert to Path object if string
+    labels_csv = Path(labels_csv)
+    
+    # Check if file exists
+    if not labels_csv.exists():
+        # Try to resolve the path for better error message
+        try:
+            abs_path = labels_csv.resolve()
+        except (OSError, RuntimeError):
+            abs_path = Path.cwd() / labels_csv
+        
+        raise FileNotFoundError(
+            f"CSV file not found: {labels_csv}\n"
+            f"  Resolved path: {abs_path}\n"
+            f"  Current directory: {Path.cwd()}\n"
+            f"  Please check the file path and ensure the file exists."
+        )
+    
+    # Check if file is readable
+    if not labels_csv.is_file():
+        raise ValueError(f"Path exists but is not a file: {labels_csv}")
+    
+    try:
+        df = pd.read_csv(labels_csv)
+    except pd.errors.EmptyDataError:
+        raise ValueError(f"CSV file is empty: {labels_csv}")
+    except Exception as e:
+        raise ValueError(f"Error reading CSV file {labels_csv}: {e}")
     
     # Handle different column name variations
     if id_col not in df.columns:
@@ -574,7 +626,28 @@ class MicrobiomeDataset(Dataset):
             sample_csv_path: Path to sample CSV (SID, label)
             embeddings_h5_path: Path to embeddings H5 (if None, auto-generates)
             paths: Dictionary of paths (from get_default_paths())
+            
+        Raises:
+            FileNotFoundError: If the sample CSV file doesn't exist
         """
+        # Convert to Path object if string
+        sample_csv_path = Path(sample_csv_path)
+        
+        # Validate CSV file exists
+        if not sample_csv_path.exists():
+            # Try to resolve the path for better error message
+            try:
+                abs_path = sample_csv_path.resolve()
+            except (OSError, RuntimeError):
+                abs_path = Path.cwd() / sample_csv_path
+            
+            raise FileNotFoundError(
+                f"Sample CSV file not found: {sample_csv_path}\n"
+                f"  Resolved path: {abs_path}\n"
+                f"  Current directory: {Path.cwd()}\n"
+                f"  Please check the file path and ensure the file exists."
+            )
+        
         self.sample_csv_path = sample_csv_path
         self.paths = paths or get_default_paths()
         
@@ -680,8 +753,27 @@ def get_dataloader(
         PyTorch DataLoader
         
     Raises:
+        FileNotFoundError: If the sample CSV file doesn't exist
         ValueError: If dataset is empty or batch_size is larger than dataset size
     """
+    # Convert to Path object if string
+    sample_csv_path = Path(sample_csv_path)
+    
+    # Validate CSV file exists before creating dataset
+    if not sample_csv_path.exists():
+        # Try to resolve the path for better error message
+        try:
+            abs_path = sample_csv_path.resolve()
+        except (OSError, RuntimeError):
+            abs_path = Path.cwd() / sample_csv_path
+        
+        raise FileNotFoundError(
+            f"Sample CSV file not found: {sample_csv_path}\n"
+            f"  Resolved path: {abs_path}\n"
+            f"  Current directory: {Path.cwd()}\n"
+            f"  Please check the file path and ensure the file exists."
+        )
+    
     dataset = MicrobiomeDataset(sample_csv_path, embeddings_h5_path, paths)
     
     # Validate dataset size
@@ -730,8 +822,15 @@ if __name__ == "__main__":
             print(f"  mask: {batch['mask'].shape}")
             print(f"  sids: {batch['sids']}")
             break
+    except FileNotFoundError as e:
+        print(f"\nFile Not Found Error:")
+        print(f"{e}")
+        print("\nTo fix this issue:")
+        print("  1. Check that the CSV file path is correct")
+        print("  2. Ensure the file exists at the specified location")
+        print("  3. Use absolute paths if relative paths are causing issues")
     except ValueError as e:
-        print(f"\nError: {e}")
+        print(f"\nValue Error: {e}")
         print("\nTo fix this issue:")
         print("  1. Check that your sample CSV contains the correct sample IDs")
         print("  2. Ensure embeddings H5 contains matching sample IDs")
