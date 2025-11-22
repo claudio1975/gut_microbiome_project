@@ -7,7 +7,7 @@ The datasets are stored in subfolders in a Google Drive data folder, that contai
 ## Dataset Status
 
 - [x] **Tanaka** - Completed
-- [ ] **Goldberg** - Pending
+- [x] **Goldberg** - Completed
 - [ ] **Diabimmune** - Pending
 - [ ] **Gadir** - Pending
 
