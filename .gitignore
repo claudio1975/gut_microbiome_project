@@ -25,3 +25,9 @@ data_preprocessing/dna_sequences/*
 # DNA embeddings - ignore all contents except .gitkeep
 data_preprocessing/dna_embeddings/*
 !data_preprocessing/dna_embeddings/.gitkeep
+
+# Content of datasets folder
+data_preprocessing/datasets/diabimmune/*
+data_preprocessing/datasets/goldberg/*
+data_preprocessing/datasets/tanaka/*
+data_preprocessing/datasets/gadir/*
