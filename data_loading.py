@@ -460,7 +460,7 @@ def load_labels(
     # Handle different column name variations
     if id_col not in df.columns:
         # Try common variations
-        for col in ['SID', 'sid', 'srs_id', 'SRS_ID']:
+        for col in ['SID', 'sid', 'srs_id', 'SRS_ID', 'ERS_ID']:
             if col in df.columns:
                 id_col = col
                 break

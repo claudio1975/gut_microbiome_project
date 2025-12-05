@@ -1,10 +1,8 @@
 # Main script to run train + evaluation
 
 from data_loading import load_dataset_df
-from modules.classifier import MicrobiomeClassifier
-from train import train_classifier
-from evaluation.evaluation import evaluate_classifier
-from utils import load_config
+from modules.classifier import SKClassifier
+from utils import load_config, prepare_data
 
 
 
@@ -13,9 +11,17 @@ if __name__ == "__main__":
     config = load_config()
     
     # load data
-    data = load_dataset_df(config)
-    # load model
-    model = MicrobiomeClassifier()
+    dataset_df = load_dataset_df(config)
+    # prepare data
+    X, y = prepare_data(dataset_df)
+
+    # load classifier model
+    classifier = SKClassifier(config['model']['classifier'], config)
+    classifier.cross_validate(X, y, k=10)
+
+    classifier.fit(X, y)
+
+    classifier.score(X, y)
     # train model
     train_classifier()
     # evaluate model

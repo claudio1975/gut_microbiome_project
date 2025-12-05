@@ -6,7 +6,7 @@ data:
   srs_to_otu_parquet: "data_preprocessing/mapref_data/samples-otus-97.parquet"
   otu_to_dna_parquet: "data_preprocessing/mapref_data/otus_97_to_dna.parquet"
   # Dataset path
-  dataset_path: "data_preprocessing/datasets/tanaka/month_2_proxy.csv" # path to preprocessed data
+  dataset_path: "data_preprocessing/datasets/goldberg/T3.csv" # path to preprocessed data
   # Embeddings paths
   dna_csv_dir: "data_preprocessing/dna_sequences"
   dna_embeddings_dir: "data_preprocessing/dna_embeddings"
@@ -21,13 +21,14 @@ data:
 
 # model
 model:
-  classifier: "linear regression" # [linear regression, ...]
-  classifier_params:
+  classifier: "logreg" # [logreg, svn, rf] -> logistic regression, support vector machine, random forest
+
+  logistic_regression_params:
     max_iter: 1000
     solver: "lbfgs"
     class_weight: "balanced"
     random_state: 42
-    # ... other classifier params
+      # ... other classifier params
 
 # evaluation
 evaluation:
