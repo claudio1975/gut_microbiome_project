@@ -16,6 +16,8 @@ from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass, field
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
     roc_curve, 
