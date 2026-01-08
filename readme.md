@@ -85,6 +85,41 @@ You need three types of files to run the pipeline:
     - Files: `samples-otus-97.parquet`, `otus_97_to_dna.parquet`
     - Place in: `data_preprocessing/mapref_data/`
 
+#### Option: Download Pre-generated Embeddings (Skip Embedding Pipeline)
+
+If you want to skip the embedding generation process and directly train classifiers, you can download pre-generated embeddings:
+
+**Download Preprocessed Data:**
+- Download from: [Google Drive - Preprocessed Data](https://drive.google.com/drive/folders/1bP98QGr1uXIhb2eZnqk4VcrHEj1su2rL?usp=sharing)
+- Available files:
+  - `diabimmune_data.zip` (4.58 GB)
+  - `gadir_data.zip` (49.5 MB)
+  - `goldberg_data.zip` (142.3 MB)
+  - `tanaka_data.zip` (33.8 MB)
+
+**Setup Instructions:**
+
+1. Download the zip file(s) for the dataset(s) you want to use
+2. Unzip each file - each contains three subfolders:
+   - `dna_sequences/`
+   - `dna_embeddings/`
+   - `microbiome_embeddings/`
+3. Place these subfolders in the corresponding dataset directory:
+
+```bash
+# Example for diabimmune dataset
+unzip diabimmune_data.zip
+
+# Move subfolders to the correct location
+mv diabimmune_data/dna_sequences/* data_preprocessing/dna_sequences/diabimmune/
+mv diabimmune_data/dna_embeddings/* data_preprocessing/dna_embeddings/diabimmune/
+mv diabimmune_data/microbiome_embeddings/* data_preprocessing/microbiome_embeddings/diabimmune/
+
+# Repeat for other datasets (gadir, goldberg, tanaka)
+```
+
+**Note:** With preprocessed embeddings, you can skip directly to [Step 2: Train and Evaluate](#step-2-train-and-evaluate) without running the embedding generation pipeline.
+
 #### Directory Structure
 
 After setup, your directory should look like this:
