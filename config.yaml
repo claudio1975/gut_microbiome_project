@@ -17,6 +17,12 @@ data:
   embedding_model: "neuralbioinfo/prokbert-mini-long"
   batch_size_embedding: 6
   device: "cpu"  # cpu, cuda, or mps
+  hugging_face:
+    dataset_name: "Tanaka" # e.g., "Diabimmune", "Goldberg", "Gadir"
+    base_repo_url: "https://huggingface.co/datasets/hugging-science"
+    pull_from_huggingface: true
+    csv_filename: "month_2.csv" # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg, "gadir_all_groups.csv" for Gadir
+
 
 # model
 model:
