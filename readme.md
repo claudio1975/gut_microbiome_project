@@ -88,6 +88,7 @@ You need three types of files to run the pipeline:
 #### Option: Download Pre-generated Embeddings (Skip Embedding Pipeline)
 
 Just execute `python main.py` as suggested in the lower sections. The script is updated to automatically pull the datasets from HuggingFace and place them in appropriate folders.
+When running the script, make sure to set the `csv_filename` argument to a valid csv file for that dataset (an error will be thrown otherwise).
 
 **Note:** With preprocessed embeddings, you can skip directly to [Step 2: Train and Evaluate](#step-2-train-and-evaluate) without running the embedding generation pipeline.
 
