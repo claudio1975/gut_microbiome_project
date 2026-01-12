@@ -69,8 +69,8 @@ evaluation:
   cv_folds: 5  # number of cross-validation folds for final evaluation
   grid_search_cv_folds: 5  # folds for grid search (inner CV)
   grid_search_scoring: "roc_auc"  # scoring metric for grid search
-  grid_search_random_state: 42  # random state for grid search CV
-  final_eval_random_state: 123  # DIFFERENT random state for final unbiased evaluation
+  grid_search_random_state: 20260101  # random state for grid search CV
+  final_eval_random_state: 20260101  # DIFFERENT random state for final unbiased evaluation
   save_normalized_cm: true
 
 # Dataset valid filenames
@@ -81,7 +81,7 @@ valid_filenames:
   - "Gadir"
 tracking:
   enabled: true
-  project: "gut-microbiome"
+  project: "gut-microbiome-experiments"
   run_name: null
   tags: ["gridsearch", "unbiased-cv"]
-  space_id: null # e.g. "username/space-name" for Trackio Hugging Face Spaces integration
+  space_id: "vaibhav2507/gut-microbiome-experiment-tracking" # e.g. "username/space-name" for Trackio Hugging Face Spaces integration
