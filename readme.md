@@ -40,12 +40,33 @@ The project follows a modular structure to separate concerns and facilitate coll
 | `data_preprocessing/dna_sequences/` | Generated DNA sequence CSVs (one per sample). |
 | `data_preprocessing/dna_embeddings/` | Generated ProkBERT embeddings (H5 format). |
 | `data_preprocessing/microbiome_embeddings/` | Generated MicrobiomeTransformer embeddings (H5 format). |
+| `huggingface_datasets/` | HuggingFace datasets with metadata and processed embeddings. |
 | `modules/` | Core model classes: `MicrobiomeTransformer` and `SKClassifier`. |
 | `utils/` | Helper utilities for data preparation and evaluation. |
 | `data_loading.py` | Unified data loading pipeline with automatic artifact generation. |
 | `generate_embeddings.py` | Standalone script for batch embedding generation. |
+| `create_unified_embeddings.py` | Script to merge all embeddings into unified files per dataset. |
+| `example_unified_embeddings.py` | Examples showing how to use unified embeddings. |
 | `main.py` | Main execution script for training and evaluation. |
 | `config.yaml` | Centralized configuration file for all parameters. |
+
+## Custom Sample Subsets
+
+You can create custom sample subsets without recomputing embeddings. Simply:
+
+1. Create a CSV file with your desired samples (must have `sid` and `label` columns)
+2. Place it in `huggingface_datasets/{DatasetName}/metadata/your_custom_file.csv`
+3. Update `config.yaml` to point to your custom file:
+   ```yaml
+   data:
+     use_unified_embeddings: true
+     hugging_face:
+       dataset_name: "Diabimmune"
+       csv_filename: "your_custom_file.csv"
+   ```
+4. Run `python main.py` as usual
+
+**Note:** If auto-downloading datasets from HuggingFace, unified embeddings are already included. Otherwise, run `python create_unified_embeddings.py --dataset all` once to merge embeddings.
 
 ## Getting Started
 

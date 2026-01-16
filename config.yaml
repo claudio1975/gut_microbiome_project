@@ -17,12 +17,16 @@ data:
   embedding_model: "neuralbioinfo/prokbert-mini-long"
   batch_size_embedding: 6
   device: "cpu"  # cpu, cuda, or mps
+  # Use unified embeddings (faster, more flexible for custom sample subsets)
+  # Set to true to use unified_all_samples.h5 instead of per-month/group embeddings
+  # Run 'python create_unified_embeddings.py' first to generate unified files
+  use_unified_embeddings: true
   hugging_face:
     download_path: "huggingface_datasets"
     dataset_name: "Tanaka" # e.g., "Diabimmune", "Goldberg", "Gadir"
     base_repo_url: "https://huggingface.co/datasets/hugging-science"
     pull_from_huggingface: true
-    csv_filename: "month_2.csv" # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg, "gadir_all_months.csv" for Gadir
+    csv_filename: "custom.csv" # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg, "gadir_all_months.csv" for Gadir
 
 # model
 model:

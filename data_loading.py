@@ -1117,6 +1117,93 @@ def create_dataset_df(dataset_path: Path, microbiome_embeddings_dir: Path):
     return dataset_df
 
 
+def create_dataset_df_from_unified(
+    dataset_path: Path, unified_embeddings_h5_path: Path
+) -> pd.DataFrame:
+    """
+    Create dataset DataFrame using unified embeddings file.
+    
+    This function loads embeddings from a unified H5 file that contains
+    all sample IDs across all months/groups for a dataset. This allows
+    for flexible loading of custom sample subsets without recomputing embeddings.
+    
+    Args:
+        dataset_path: Path to dataset csv with 'sid' and 'label' columns
+        unified_embeddings_h5_path: Path to unified microbiome embeddings H5 file
+    
+    Returns:
+        DataFrame with id, label, and microbiome embedding
+    """
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset CSV file not found: {dataset_path}")
+    
+    if not unified_embeddings_h5_path.exists():
+        raise FileNotFoundError(
+            f"Unified embeddings H5 file not found: {unified_embeddings_h5_path}\n"
+            f"Run 'python create_unified_embeddings.py' to generate unified embeddings."
+        )
+    
+    # Load dataset CSV
+    dataset_df = pd.read_csv(dataset_path)
+    
+    if "sid" not in dataset_df.columns:
+        raise ValueError(f"Dataset CSV must contain 'sid' column. Found: {dataset_df.columns.tolist()}")
+    
+    # Check for duplicates in CSV
+    if dataset_df["sid"].duplicated().any():
+        n_duplicates = dataset_df["sid"].duplicated().sum()
+        duplicate_sids = dataset_df[dataset_df["sid"].duplicated(keep=False)]["sid"].unique()
+        print(f"\n⚠️  Warning: Found {n_duplicates} duplicate sample IDs in CSV:")
+        for dup_sid in duplicate_sids[:5]:
+            count = (dataset_df["sid"] == dup_sid).sum()
+            print(f"  - {dup_sid}: appears {count} times")
+        if len(duplicate_sids) > 5:
+            print(f"  ... and {len(duplicate_sids) - 5} more")
+        print(f"\n  Keeping first occurrence of each duplicate.\n")
+        
+        # Remove duplicates, keeping first occurrence
+        dataset_df = dataset_df.drop_duplicates(subset=["sid"], keep="first")
+    
+    # Read embeddings from unified H5 file (now only for unique SIDs)
+    embeddings_data = []
+    missing_sids = []
+    
+    with h5py.File(unified_embeddings_h5_path, "r") as h5f:
+        available_sids = set(h5f.keys())
+        
+        for sid in dataset_df["sid"]:
+            if sid in available_sids:
+                embedding = h5f[sid][:]  # (D_MODEL,) numpy array
+                embeddings_data.append({"sid": sid, "embedding": embedding})
+            else:
+                missing_sids.append(sid)
+    
+    if missing_sids:
+        print(f"\nWarning: {len(missing_sids)} sample IDs from CSV not found in unified embeddings:")
+        print(f"  Example missing SIDs: {missing_sids[:5]}")
+        if len(missing_sids) == len(dataset_df):
+            raise ValueError(
+                "No sample IDs from CSV were found in unified embeddings. "
+                "Check that you're using the correct unified embeddings file for this dataset."
+            )
+    
+    if not embeddings_data:
+        raise ValueError(
+            "No embeddings loaded from unified file. "
+            "Check that the SIDs in your CSV match those in the unified embeddings."
+        )
+    
+    # Create DataFrame with embeddings
+    microbiome_embeddings_df = pd.DataFrame(embeddings_data)
+    dataset_df = dataset_df.merge(
+        microbiome_embeddings_df, left_on="sid", right_on="sid", how="inner"
+    )
+    
+    print(f"Loaded {len(dataset_df)} samples from unified embeddings")
+    
+    return dataset_df
+
+
 def download_dataset_from_hf(
     config: dict, valid_filenames: dict
 ) -> Tuple[Path, Path, Path]:
@@ -1197,20 +1284,27 @@ def download_dataset_from_hf(
 def load_dataset_df(config: dict) -> pd.DataFrame:
     """
     Process dataset and return dataframe with id, label, and microbiome embedding.
-    Processing pipeline:
-    1. extract csv sequences from dataset
-    2. generate dna embeddings from csv sequences
-    3. generate microbiome embeddings from dna embeddings
-    4. sanity check for consistency on dna embeddings and microbiome embeddings
-    5. create dataframe relating labels from dataset csv and corresponding microbiome embeddings
+    
+    Supports two modes:
+    1. Unified mode (use_unified_embeddings=True): Load from unified embeddings file
+       - Fast and flexible for custom sample subsets
+       - No need to recompute embeddings for each subset
+    
+    2. Standard mode (use_unified_embeddings=False): Traditional pipeline
+       - extract csv sequences from dataset
+       - generate dna embeddings from csv sequences
+       - generate microbiome embeddings from dna embeddings
+       - sanity check for consistency on dna embeddings and microbiome embeddings
+       - create dataframe relating labels from dataset csv and corresponding microbiome embeddings
 
     Args:
-        config_path: Path to config file
+        config: Configuration dictionary
     Returns:
         DataFrame with id, label, and microbiome embedding
     """
 
-    dataset_path = Path(config["data"]["dataset_path"])
+    use_unified = config["data"].get("use_unified_embeddings", False)
+    
     if config["data"]["hugging_face"]["pull_from_huggingface"]:
         dataset_path, sequences_dir, dna_embeddings_dir, microbiome_embeddings_dir = (
             download_dataset_from_hf(
@@ -1218,9 +1312,60 @@ def load_dataset_df(config: dict) -> pd.DataFrame:
             )
         )
     else:
+        dataset_path = Path(config["data"]["dataset_path"])
         sequences_dir, dna_embeddings_dir, microbiome_embeddings_dir = build_paths(
             config, dataset_path
         )
+    
+    # Check if unified embeddings should be used
+    if use_unified:
+        # Try to use unified embeddings
+        if config["data"]["hugging_face"]["pull_from_huggingface"]:
+            dataset_name = config["data"]["hugging_face"]["dataset_name"]
+            unified_path = (
+                Path(config["data"]["hugging_face"]["download_path"]) 
+                / dataset_name 
+                / "processed" 
+                / "microbiome_embeddings" 
+                / "unified_all_samples.h5"
+            )
+        else:
+            # For local datasets, infer the dataset name from the path
+            # Assuming structure: .../huggingface_datasets/{dataset_name}/...
+            try:
+                dataset_root = dataset_path
+                while dataset_root.parent.name != "huggingface_datasets" and dataset_root != dataset_root.parent:
+                    dataset_root = dataset_root.parent
+                
+                if dataset_root.parent.name == "huggingface_datasets":
+                    unified_path = (
+                        dataset_root 
+                        / "processed" 
+                        / "microbiome_embeddings" 
+                        / "unified_all_samples.h5"
+                    )
+                else:
+                    raise ValueError("Could not determine dataset root for unified embeddings")
+            except Exception as e:
+                print(f"Warning: Could not locate unified embeddings: {e}")
+                print("Falling back to standard pipeline...")
+                use_unified = False
+        
+        if use_unified:
+            if unified_path.exists():
+                print(f"Using unified embeddings from: {unified_path}")
+                dataset_df = create_dataset_df_from_unified(dataset_path, unified_path)
+                print(
+                    f"Created dataset dataframe with {len(dataset_df)} rows and {len(dataset_df.columns)} columns"
+                )
+                return dataset_df
+            else:
+                print(f"Warning: Unified embeddings not found at {unified_path}")
+                print("Run 'python create_unified_embeddings.py' to generate unified embeddings.")
+                print("Falling back to standard pipeline...")
+                use_unified = False
+    
+    # Standard pipeline (if unified not requested or not available)
 
     # 1) extract csv sequences from dataset
     if not sequences_dir.exists():
