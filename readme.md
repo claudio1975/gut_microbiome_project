@@ -50,40 +50,23 @@ The project follows a modular structure to separate concerns and facilitate coll
 | `main.py` | Main execution script for training and evaluation. |
 | `config.yaml` | Centralized configuration file for all parameters. |
 
-## New Feature: Unified Embeddings 🚀
+## Custom Sample Subsets
 
-We've introduced a powerful feature that allows you to work with **custom sample subsets** without recomputing embeddings:
+You can create custom sample subsets without recomputing embeddings. Simply:
 
-### What it does:
-- **Merges** all embeddings from different months/groups into a single unified file per dataset
-- **Enables** flexible loading of any custom sample combination
-- **Eliminates** the need to recompute embeddings for each subset
-- **Speeds up** experimentation and iteration
+1. Create a CSV file with your desired samples (must have `sid` and `label` columns)
+2. Place it in `huggingface_datasets/{DatasetName}/metadata/your_custom_file.csv`
+3. Update `config.yaml` to point to your custom file:
+   ```yaml
+   data:
+     use_unified_embeddings: true
+     hugging_face:
+       dataset_name: "Diabimmune"
+       csv_filename: "your_custom_file.csv"
+   ```
+4. Run `python main.py` as usual
 
-### Quick Start:
-
-```bash
-# Step 1: Generate unified embeddings (one-time setup)
-python create_unified_embeddings.py --dataset all
-
-# Step 2: Create a custom CSV with your desired samples
-# (Just list the sample IDs with labels - embeddings are already computed!)
-
-# Step 3: Set use_unified_embeddings: true in config.yaml
-
-# Step 4: Run your analysis as usual!
-python main.py
-```
-
-### Example Use Cases:
-- Isolate specific subjects from Month 1
-- Mix samples from different time points
-- Create custom train/test splits
-- Quick prototyping with small subsets
-
-📖 **For detailed instructions, see [UNIFIED_EMBEDDINGS_GUIDE.md](UNIFIED_EMBEDDINGS_GUIDE.md)**
-
-💡 **For code examples, check out [example_unified_embeddings.py](example_unified_embeddings.py)**
+**Note:** If auto-downloading datasets from HuggingFace, unified embeddings are already included. Otherwise, run `python create_unified_embeddings.py --dataset all` once to merge embeddings.
 
 ## Getting Started
 

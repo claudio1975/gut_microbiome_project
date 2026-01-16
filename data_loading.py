@@ -1149,7 +1149,22 @@ def create_dataset_df_from_unified(
     if "sid" not in dataset_df.columns:
         raise ValueError(f"Dataset CSV must contain 'sid' column. Found: {dataset_df.columns.tolist()}")
     
-    # Read embeddings from unified H5 file
+    # Check for duplicates in CSV
+    if dataset_df["sid"].duplicated().any():
+        n_duplicates = dataset_df["sid"].duplicated().sum()
+        duplicate_sids = dataset_df[dataset_df["sid"].duplicated(keep=False)]["sid"].unique()
+        print(f"\n⚠️  Warning: Found {n_duplicates} duplicate sample IDs in CSV:")
+        for dup_sid in duplicate_sids[:5]:
+            count = (dataset_df["sid"] == dup_sid).sum()
+            print(f"  - {dup_sid}: appears {count} times")
+        if len(duplicate_sids) > 5:
+            print(f"  ... and {len(duplicate_sids) - 5} more")
+        print(f"\n  Keeping first occurrence of each duplicate.\n")
+        
+        # Remove duplicates, keeping first occurrence
+        dataset_df = dataset_df.drop_duplicates(subset=["sid"], keep="first")
+    
+    # Read embeddings from unified H5 file (now only for unique SIDs)
     embeddings_data = []
     missing_sids = []
     
