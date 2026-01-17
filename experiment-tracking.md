@@ -54,7 +54,7 @@ python main.py –-config configs/diabimmune.yaml –-publish_to_main
 
 * Skips hyperparameter tuning and runs evaluation only.
 
-* python main.py –config configs/diabimmune.yaml –eval_only
+* python main.py -–config configs/diabimmune.yaml -–eval_only
 
 **Useful for**:
 * quick validation
