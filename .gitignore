@@ -21,6 +21,7 @@ data_preprocessing/mapref_data/samples-otus-97.parquet
 # DNA sequences - ignore all contents except .gitkeep
 data_preprocessing/dna_sequences/*
 !data_preprocessing/dna_sequences/.gitkeep
+data_preprocessing/datasets_preprocessing_scripts/diabimmune/preprocessing_scripts/preprocessed_diabimmune_longitudinal
 
 # DNA embeddings - ignore all contents except .gitkeep
 data_preprocessing/dna_embeddings/*

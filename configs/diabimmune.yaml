@@ -1,0 +1,15 @@
+# Diabimmune dataset config (inherits configs/base.yaml conceptually)
+# If you aren't doing YAML-merge in code, copy base.yaml content + these overrides,
+# OR use CLI overrides as described below.
+
+data:
+  dataset_path: "data_preprocessing/datasets/diabimmune/Month_3.csv"
+
+  hugging_face:
+    dataset_name: "Diabimmune"
+    csv_filename: "Month_10_good.csv"
+
+tracking:
+  project: "gut-microbiome-diabimmune"
+  tags: ["diabimmune", "gridsearch", "unbiased-cv"]
+  space_id: "vaibhav2507/gut-microbiome-diabimmune-test-11"

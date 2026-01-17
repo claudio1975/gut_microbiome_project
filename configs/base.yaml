@@ -1,18 +1,21 @@
-# Config arguments for the project
+# Base config shared by all datasets
 
-# Data path
 data:
   # Data preprocessing paths
   srs_to_otu_parquet: "data_preprocessing/mapref_data/samples-otus-97.parquet"
   otu_to_dna_parquet: "data_preprocessing/mapref_data/otus_97_to_dna.parquet"
-  # Dataset path
-  dataset_path: "data_preprocessing/datasets/goldberg/all_groups.csv" # path to preprocessed data
+
+  # Dataset path (overridden by dataset configs or CLI --dataset_path)
+  dataset_path: ""
+
   # Embeddings paths
   dna_csv_dir: "data_preprocessing/dna_sequences"
   dna_embeddings_dir: "data_preprocessing/dna_embeddings"
   microbiome_embeddings_dir: "data_preprocessing/microbiome_embeddings"
+
   # MicrobiomeTransformer checkpoint path
   mirobiome_transformer_checkpoint: "data/checkpoint_epoch_0_final_epoch3_conf00.pt"
+
   # ProkBERT model name
   embedding_model: "neuralbioinfo/prokbert-mini-long"
   batch_size_embedding: 6
@@ -21,25 +24,24 @@ data:
   # Set to true to use unified_all_samples.h5 instead of per-month/group embeddings
   # Run 'python create_unified_embeddings.py' first to generate unified files
   use_unified_embeddings: true
+
   hugging_face:
     download_path: "huggingface_datasets"
-    dataset_name: "Tanaka" # e.g., "Diabimmune", "Goldberg", "Gadir"
+    dataset_name: ""          # overridden per dataset config
     base_repo_url: "https://huggingface.co/datasets/hugging-science"
     pull_from_huggingface: true
-    csv_filename: "custom.csv" # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg, "gadir_all_months.csv" for Gadir
+    csv_filename: "month_2.csv" # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg, "gadir_all_months.csv" for Gadir
 
-# model
 model:
-  classifier: "logreg" # default classifier [logreg, svm, rf, mlp]
-  use_scaler: true  # Apply StandardScaler before classifier (recommended for logreg, svm, mlp)
+  classifier: "logreg"        # default classifier [logreg, svm, rf, mlp]
+  use_scaler: true            # Apply StandardScaler before classifier
 
-  # Parameter grids for grid search - one per classifier type
   param_grids:
     logreg:
       C: [0.001, 0.01, 0.1, 1, 10]
       penalty: ["l1", "l2"]
       class_weight: ["balanced"]
-      solver: ["saga"]  # saga supports both l1 and l2
+      solver: ["saga"]
       max_iter: [1000, 2000]
 
     svm:
@@ -63,19 +65,24 @@ model:
       learning_rate: ["constant", "adaptive"]
       max_iter: [500, 1000]
 
-# evaluation
 evaluation:
   results_output_dir: "eval_results"
-  cv_folds: 5  # number of cross-validation folds for final evaluation
-  grid_search_cv_folds: 5  # folds for grid search (inner CV)
-  grid_search_scoring: "roc_auc"  # scoring metric for grid search
-  grid_search_random_state: 42  # random state for grid search CV
-  final_eval_random_state: 123  # DIFFERENT random state for final unbiased evaluation
+  cv_folds: 5
+  grid_search_cv_folds: 5
+  grid_search_scoring: "roc_auc"
+  grid_search_random_state: 20260101
+  final_eval_random_state: 20260101
   save_normalized_cm: true
 
-# Dataset valid filenames
 valid_filenames:
   - "Tanaka"
   - "Diabimmune"
   - "Goldberg"
   - "Gadir"
+
+tracking:
+  enabled: true
+  project: "gut-microbiome-experiments"
+  run_name: null
+  tags: ["gridsearch", "unbiased-cv"]
+  space_id: "vaibhav2507/gut-microbiome"

@@ -1,0 +1,13 @@
+# Gadir dataset config
+
+data:
+  dataset_path: "data_preprocessing/datasets/gadir/gadir_all_months.csv"
+
+  hugging_face:
+    dataset_name: "Gadir"
+    csv_filename: "gadir_all_months.csv"
+
+tracking:
+  project: "gut-microbiome-gadir"
+  tags: ["gadir", "gridsearch", "unbiased-cv"]
+  space_id: "vaibhav2507/gut-microbiome-gadir-test"
