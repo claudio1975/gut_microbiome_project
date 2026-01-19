@@ -7,9 +7,9 @@ data:
 
   hugging_face:
     dataset_name: "Diabimmune"
-    csv_filename: "Month_10_good.csv"
+    csv_filename: "Month_3.csv"
 
 tracking:
   project: "gut-microbiome-diabimmune"
   tags: ["diabimmune", "gridsearch", "unbiased-cv"]
-  space_id: "vaibhav2507/gut-microbiome-diabimmune-test-11"
+  space_id: "hugging-science/AI4FA-logging-diabimmune"
