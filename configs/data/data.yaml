@@ -1,0 +1,30 @@
+# Data preprocessing paths
+srs_to_otu_parquet: "data_preprocessing/mapref_data/samples-otus-97.parquet"
+otu_to_dna_parquet: "data_preprocessing/mapref_data/otus_97_to_dna.parquet"
+
+# Dataset path (overridden by dataset configs or CLI --dataset_path)
+dataset_path: ""
+
+# Embeddings paths
+dna_csv_dir: "data_preprocessing/dna_sequences"
+dna_embeddings_dir: "data_preprocessing/dna_embeddings"
+microbiome_embeddings_dir: "data_preprocessing/microbiome_embeddings"
+
+# MicrobiomeTransformer checkpoint path
+mirobiome_transformer_checkpoint: "data/checkpoint_epoch_0_final_epoch3_conf00.pt"
+
+# ProkBERT model name
+embedding_model: "neuralbioinfo/prokbert-mini-long"
+batch_size_embedding: 6
+device: "cpu"  # cpu, cuda, or mps
+# Use unified embeddings (faster, more flexible for custom sample subsets)
+# Set to true to use unified_all_samples.h5 instead of per-month/group embeddings
+# Run 'python create_unified_embeddings.py' first to generate unified files
+use_unified_embeddings: true
+
+hugging_face:
+  download_path: "huggingface_datasets"
+  dataset_name: ""          # overridden per dataset config
+  base_repo_url: "https://huggingface.co/datasets/hugging-science"
+  pull_from_huggingface: true
+  csv_filename: "month_2.csv" # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg, "gadir_all_months.csv" for Gadir

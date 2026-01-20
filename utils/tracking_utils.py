@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any, Dict, Optional
-
+from typing import Any, Optional
+from omegaconf import DictConfig
 import numpy as np
+import trackio as wandb  # Trackio exposes a wandb-like API
+from rich.console import Console
 
 
 def _is_bad_float(v: float) -> bool:
@@ -32,7 +34,9 @@ def _is_trackio_media_obj(x: Any) -> bool:
 
     # wandb-like datatypes have _type
     _type = getattr(x, "_type", None)
-    if isinstance(_type, str) and any(tok in _type.lower() for tok in ("image", "table")):
+    if isinstance(_type, str) and any(
+        tok in _type.lower() for tok in ("image", "table")
+    ):
         return True
 
     if any(tok in mod.lower() for tok in ("trackio", "wandb")):
@@ -86,7 +90,7 @@ def _sanitize_for_trackio(x: Any) -> Any:
     # list/tuple
     if isinstance(x, (list, tuple)):
         return [_sanitize_for_trackio(v) for v in x]
-    
+
     return x
 
 
@@ -95,6 +99,7 @@ class _TrackerProxy:
     Wraps a Trackio Run object.
     Ensures EVERY .log() call sanitizes NaN/Inf but preserves media objects.
     """
+
     def __init__(self, run: Any, wandb_module: Any):
         self._run = run
         # expose constructors for calling code
@@ -113,36 +118,35 @@ class _TrackerProxy:
 
 
 def get_tracker(
-    config: Dict[str, Any],
+    config: DictConfig,
     *,
     run_name: Optional[str] = None,
     group: Optional[str] = None,
+    console: Console = Console(),
 ) -> Optional[Any]:
     """
     Returns a Trackio run proxy (wandb-like), or None if disabled.
     Proxy guarantees .log() won't crash on NaN/Inf and won't break media objects.
     """
-    tcfg = (config or {}).get("tracking", {}) or {}
-    if not tcfg.get("enabled", False):
+    if not config.tracking.enabled:
         return None
 
-    import trackio as wandb  # Trackio exposes a wandb-like API
-
-    name = (run_name or tcfg.get("run_name") or "").strip()
+    name = run_name or config.tracking.run_name.strip()
     if not name:
-        print(
+        console.print(
             "⚠️  Tracking enabled but run_name was not provided. "
-            "Skipping tracker init to avoid random run names."
+            "Skipping tracker init to avoid random run names.",
+            style="error",
         )
         return None
 
-    space_id = tcfg.get("space_id", None) or None
+    space_id = config.tracking.space_id
 
     # sanitize config too (it may contain numpy scalars)
     safe_config = _sanitize_for_trackio(config)
 
     run = wandb.init(
-        project=tcfg.get("project", "gut-microbiome"),
+        project=config.get("project", "gut-microbiome"),
         name=name,
         group=(group or None),
         config=safe_config,

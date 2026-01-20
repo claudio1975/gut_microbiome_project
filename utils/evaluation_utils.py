@@ -10,12 +10,15 @@ Results are stored in the following structure:
                 {classifier}_confusion_matrix.png
 """
 
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 import pandas as pd
 import numpy as np
 import matplotlib
+from omegaconf import DictConfig, OmegaConf, ListConfig
+from rich.console import Console
 
 matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
@@ -85,7 +88,8 @@ class ResultsManager:
 
     def __init__(
         self,
-        config: dict,
+        config: DictConfig,
+        console: Console,
         class_names: Optional[List[str]] = None,
     ):
         """
@@ -96,9 +100,9 @@ class ResultsManager:
             dataset_path: Path to the dataset CSV file (used to extract dataset_name and data_source)
             class_names: Optional list of class names for labeling plots
         """
-        self.results_output_dir = Path(config["evaluation"]["results_output_dir"])
-        self.dataset_name = config["data"]["hugging_face"]["dataset_name"]
-        self.data_source = Path(config["data"]["hugging_face"]["csv_filename"]).stem
+        self.results_output_dir = Path(config.evaluation.results_output_dir)
+        self.dataset_name = config.data.hugging_face.dataset_name
+        self.data_source = Path(config.data.hugging_face.csv_filename).stem
         self.class_names = class_names
 
         # Build output directory path
@@ -107,13 +111,31 @@ class ResultsManager:
         # Storage for results from multiple classifiers
         self.results: Dict[str, EvaluationResult] = {}
 
+        # Log initialization
+        console.print(
+            f"ResultsManager initialized. Results will be saved to: {self.output_dir}",
+            style="bold",
+        )
+        self.console = console
+
         # Create output directory
         self._ensure_output_dir()
+
+    def to_native(self, obj):
+        """Convert OmegaConf objects to native Python types."""
+        if isinstance(obj, (DictConfig, ListConfig)):
+            return OmegaConf.to_container(obj, resolve=True)
+        elif isinstance(obj, dict):
+            return {k: self.to_native(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.to_native(v) for v in obj]
+        else:
+            return obj
 
     def _ensure_output_dir(self):
         """Create output directory if it doesn't exist."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Results will be saved to: {self.output_dir}")
+        self.console.print(f"Results will be saved to: {self.output_dir}", style="bold")
 
     def add_result(self, result: EvaluationResult):
         """Add an evaluation result for a classifier."""
@@ -157,9 +179,8 @@ class ResultsManager:
 
         # Add best params if available (from grid search)
         if result.best_params:
-            import json
-
-            report_df["best_params"] = json.dumps(result.best_params)
+            native_best_params = self.to_native(result.best_params)
+            report_df["best_params"] = json.dumps(native_best_params)
 
         # Determine filename
         if filename is None:
@@ -168,7 +189,9 @@ class ResultsManager:
         # Save to CSV
         output_path = self.output_dir / filename
         report_df.to_csv(output_path)
-        print(f"  ✓ Classification report saved: {output_path}")
+        self.console.print(
+            f"  ✓ Classification report saved: {output_path}", style="success"
+        )
 
         return output_path
 
@@ -190,8 +213,9 @@ class ResultsManager:
             Path to saved image, or None if probabilities not available
         """
         if not result.has_probabilities:
-            print(
-                f"  ⚠ Skipping ROC curve for {result.classifier_name}: no probability predictions"
+            self.console.print(
+                f"  ⚠ Skipping ROC curve for {result.classifier_name}: no probability predictions",
+                style="warning",
             )
             return None
 
@@ -254,11 +278,11 @@ class ResultsManager:
             )
             plt.close(fig)
 
-            print(f"  ✓ ROC curve saved: {output_path}")
+            self.console.print(f"  ✓ ROC curve saved: {output_path}", style="success")
             return output_path
 
         except Exception as e:
-            print(f"  ✗ Error saving ROC curve: {e}")
+            self.console.print(f"  ✗ Error saving ROC curve: {e}", style="error")
             return None
 
     def save_confusion_matrix(
@@ -321,7 +345,9 @@ class ResultsManager:
         )
         plt.close(fig)
 
-        print(f"  ✓ Confusion matrix saved: {output_path}")
+        self.console.print(
+            f"  ✓ Confusion matrix saved: {output_path}", style="success"
+        )
         return output_path
 
     def save_all_results(
@@ -342,7 +368,9 @@ class ResultsManager:
         all_paths = {}
 
         for res in results_to_save:
-            print(f"\nSaving results for {res.classifier_name}...")
+            self.console.print(
+                f"\nSaving results for {res.classifier_name}...", style="path"
+            )
 
             # Save classification report
             report_path = self.save_classification_report(res)
@@ -415,7 +443,9 @@ class ResultsManager:
         output_path = self.output_dir / filename
         combined_df.to_csv(output_path, index=False)
 
-        print(f"\n✓ Combined classification report saved: {output_path}")
+        self.console.print(
+            f"\n✓ Combined classification report saved: {output_path}", style="success"
+        )
         return output_path
 
     def save_comparison_roc_curves(
@@ -430,7 +460,10 @@ class ResultsManager:
         results_with_probs = [r for r in self.results.values() if r.has_probabilities]
 
         if not results_with_probs:
-            print("No classifiers with probability predictions to compare.")
+            self.console.print(
+                "No classifiers with probability predictions to compare.",
+                style="warning",
+            )
             return None
 
         # Create figure
@@ -487,7 +520,9 @@ class ResultsManager:
         )
         plt.close(fig)
 
-        print(f"\n✓ Comparison ROC curves saved: {output_path}")
+        self.console.print(
+            f"\n✓ Comparison ROC curves saved: {output_path}", style="success"
+        )
         return output_path
 
 

@@ -3,16 +3,15 @@
 
 from __future__ import annotations
 
-import argparse
-import csv
 import httpx
 import json
 import math
 import os
+import hydra
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from rich.console import Console
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import trackio as wandb
@@ -20,9 +19,11 @@ from PIL import Image as PILImage
 
 from data_loading import load_dataset_df
 from modules.classifier import SKClassifier
-from utils.data_utils import load_config, prepare_data
+from utils.data_utils import prepare_data
 from utils.evaluation_utils import EvaluationResult, ResultsManager
 from utils.tracking_utils import get_tracker, safe_log
+from omegaconf import DictConfig, OmegaConf
+from utils.generic_utils import RichConsoleManager
 
 
 def _confirm_publish_to_main() -> None:
@@ -32,7 +33,9 @@ def _confirm_publish_to_main() -> None:
     """
     try:
         print("\n⚠️  You are about to publish results to the Hugging Face Space.")
-        print("    This may overwrite/update media, tables, and metrics on the shared dashboard.")
+        print(
+            "    This may overwrite/update media, tables, and metrics on the shared dashboard."
+        )
         resp = input("👉 Continue? [yes / no]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print("\n❌ Publish cancelled (no confirmation).")
@@ -192,7 +195,9 @@ def _tracking_cache_hint() -> str:
     return os.path.join(home, ".cache", "huggingface", "trackio")
 
 
-def _print_where_to_check_results(*, publish: bool, project: str, space_id: str) -> None:
+def _print_where_to_check_results(
+    *, publish: bool, project: str, space_id: str
+) -> None:
     print("\n" + "-" * 80)
     print("📍 Where to check Trackio results")
 
@@ -220,10 +225,7 @@ def _print_where_to_check_results(*, publish: bool, project: str, space_id: str)
 
 
 def _apply_tracking_routing(
-    config: Dict[str, Any],
-    *,
-    data_id: str,
-    publish_to_main: bool,
+    config: DictConfig, data_id: str, console: Console = Console()
 ) -> None:
     """
     Configure Trackio logging mode based on publish_to_main.
@@ -233,75 +235,67 @@ def _apply_tracking_routing(
 
     In local mode, HF-related fields are cleared to avoid accidental pushes.
     """
-    config.setdefault("tracking", {})
-    tcfg = config["tracking"] or {}
-    config["tracking"] = tcfg
 
-    if publish_to_main:
+    if config.tracking.publish_to_main:
         final_project = data_id
         mode = "publish"
     else:
         final_project = f"{data_id}-local"
         mode = "local"
 
-    tcfg["enabled"] = True
-    tcfg["project"] = final_project
+    config.tracking.enabled = True
+    config.tracking.project = final_project
 
     if mode == "local":
-        for k in [
-            "space_id",
-            "space-id",
-            "dataset_id",
-            "dataset-id",
-            "hf_dataset_id",
-            "hf-dataset-id",
-            "repo_id",
-            "repo-id",
-            "organization",
-            "org",
-        ]:
-            if k in tcfg:
-                tcfg.pop(k, None)
+        config.tracking.space_id = None
 
-        tcfg["space_id"] = None
-        tcfg["dataset_id"] = None
-        tcfg["publish_to_hf"] = False
-        tcfg["mode"] = "local"
-
-        print("\n" + "=" * 80)
-        print("🧪 LOCAL MODE: Trackio logging is local only (no Hugging Face push).")
-        print("    Runs are stored on this machine.")
-        print(f"    Project: {final_project}")
-        print("    To publish to the Space dashboard, re-run with: --publish_to_main")
-        print("=" * 80 + "\n")
+        console.print("\n" + "=" * 80)
+        console.print(
+            "🧪 LOCAL MODE: Trackio logging is local only (no Hugging Face push).",
+            style="info",
+        )
+        console.print("Runs are stored on this machine.", style="info")
+        console.print(f"Project: {final_project}", style="info")
+        console.print(
+            "To publish to the Space dashboard, re-run with: --publish_to_main",
+            style="info",
+        )
+        console.print("=" * 80 + "\n")
     else:
-        tcfg["publish_to_hf"] = True
-        tcfg["mode"] = "publish"
-
-        print("\n" + "=" * 80)
-        print("⚠️  PUBLISH MODE ENABLED: pushing runs to Hugging Face Space dashboard")
-        print(f"    Space:   {tcfg.get('space_id', '')}")
-        print(f"    Project: {final_project}")
-        print("=" * 80 + "\n")
+        console.print("\n" + "=" * 80)
+        console.print(
+            "⚠️  PUBLISH MODE ENABLED: pushing runs to Hugging Face Space dashboard"
+        )
+        console.print(f"    Space:   {config.tracking.space_id}", style="info")
+        console.print(f"    Project: {final_project}", style="info")
+        console.print("=" * 80 + "\n")
 
     _print_where_to_check_results(
-        publish=publish_to_main,
+        publish=config.tracking.publish_to_main,
         project=final_project,
-        space_id=str(tcfg.get("space_id") or ""),
+        space_id=config.tracking.space_id,
     )
 
 
 def _get_tags(
-    config: Dict[str, Any], *, dataset_family: str, data_id: str, pipeline: str, clf_type: str
+    config: DictConfig,
+    *,
+    dataset_family: str,
+    data_id: str,
+    pipeline: str,
+    clf_type: str,
 ) -> List[str]:
     """
     Trackio tag support can vary across backends. We avoid passing tags into init()
     and instead log them as metadata for filtering/search.
     """
-    tcfg = (config or {}).get("tracking", {}) or {}
-    base_tags = tcfg.get("tags", []) or []
-    tags = list(base_tags)
-    tags += [f"dataset:{dataset_family}", f"data_id:{data_id}", f"pipeline:{pipeline}", f"model:{clf_type}"]
+    tags = config.tracking.tags
+    tags += [
+        f"dataset:{dataset_family}",
+        f"data_id:{data_id}",
+        f"pipeline:{pipeline}",
+        f"model:{clf_type}",
+    ]
 
     seen = set()
     out: List[str] = []
@@ -312,22 +306,22 @@ def _get_tags(
     return out
 
 
-def _make_run_name(config: dict, clf_type: str, pipeline: str) -> str:
-    dataset_path = config.get("data", {}).get("dataset_path", "dataset")
-    _, data_id = _dataset_family_and_id(str(dataset_path))
+def _make_run_name(config: DictConfig, clf_type: str, pipeline: str) -> str:
+    dataset_path = config.data.dataset_path
+    _, data_id = _dataset_family_and_id(dataset_path)
     if clf_type == "summary":
         return f"{data_id}__summary"
     return f"{data_id}__{clf_type}"
 
 
 def _make_group_name(config: dict, pipeline: str) -> str:
-    dataset_path = config.get("data", {}).get("dataset_path", "dataset")
-    _, data_id = _dataset_family_and_id(str(dataset_path))
+    dataset_path = config.data.dataset_path
+    _, data_id = _dataset_family_and_id(dataset_path)
     return f"{data_id}"
 
 
-def _run_metadata(config: dict, clf_type: str, pipeline: str) -> Dict[str, Any]:
-    dataset_path = str(config.get("data", {}).get("dataset_path", ""))
+def _run_metadata(config: DictConfig, clf_type: str, pipeline: str) -> Dict[str, Any]:
+    dataset_path = config.data.dataset_path
     dataset_family, data_id = _dataset_family_and_id(dataset_path)
 
     user = (
@@ -339,12 +333,11 @@ def _run_metadata(config: dict, clf_type: str, pipeline: str) -> Dict[str, Any]:
     )
     host = os.uname().nodename if hasattr(os, "uname") else "unknown"
 
-    eval_cfg = config.get("evaluation", {}) or {}
-    gs_cv = eval_cfg.get("grid_search_cv_folds", None)
-    fe_cv = eval_cfg.get("cv_folds", None)
-    scoring = eval_cfg.get("grid_search_scoring", None)
-    gs_rs = eval_cfg.get("grid_search_random_state", None)
-    fe_rs = eval_cfg.get("final_eval_random_state", None)
+    gs_cv = config.evaluation.grid_search_cv_folds
+    fe_cv = config.evaluation.cv_folds
+    scoring = config.evaluation.grid_search_scoring
+    gs_rs = config.evaluation.grid_search_random_state
+    fe_rs = config.evaluation.final_eval_random_state
 
     return {
         "meta/user": user,
@@ -363,17 +356,25 @@ def _run_metadata(config: dict, clf_type: str, pipeline: str) -> Dict[str, Any]:
     }
 
 
-def _log_artifacts(tracker, results_manager: ResultsManager, classifier_name: str) -> None:
+def _log_artifacts(
+    tracker, results_manager: ResultsManager, classifier_name: str
+) -> None:
     if tracker is None:
         return
 
     out = Path(results_manager.output_dir)
     artifacts = {
         "artifacts/output_dir": str(out),
-        "artifacts/classification_report_csv": str(out / f"{classifier_name}_classification_report.csv"),
+        "artifacts/classification_report_csv": str(
+            out / f"{classifier_name}_classification_report.csv"
+        ),
         "artifacts/roc_curve_png": str(out / f"{classifier_name}_roc_curve.png"),
-        "artifacts/confusion_matrix_png": str(out / f"{classifier_name}_confusion_matrix.png"),
-        "artifacts/confusion_matrix_norm_true_png": str(out / f"{classifier_name}_confusion_matrix_norm_true.png"),
+        "artifacts/confusion_matrix_png": str(
+            out / f"{classifier_name}_confusion_matrix.png"
+        ),
+        "artifacts/confusion_matrix_norm_true_png": str(
+            out / f"{classifier_name}_confusion_matrix_norm_true.png"
+        ),
     }
     safe_log(tracker, artifacts)
 
@@ -385,8 +386,10 @@ def _log_eval_images(tracker, output_dir: Path, classifier_name: str) -> None:
     output_dir = Path(output_dir)
     pngs = {
         "media/roc_curve": output_dir / f"{classifier_name}_roc_curve.png",
-        "media/confusion_matrix": output_dir / f"{classifier_name}_confusion_matrix.png",
-        "media/confusion_matrix_norm_true": output_dir / f"{classifier_name}_confusion_matrix_norm_true.png",
+        "media/confusion_matrix": output_dir
+        / f"{classifier_name}_confusion_matrix.png",
+        "media/confusion_matrix_norm_true": output_dir
+        / f"{classifier_name}_confusion_matrix_norm_true.png",
     }
 
     existing = {k: p for k, p in pngs.items() if p.exists()}
@@ -433,7 +436,9 @@ def _log_only_numeric_metrics(tracker, payload: Dict[str, Any]) -> None:
         safe_log(tracker, clean)
 
 
-def _log_metrics_block(tracker, *, pipeline: str, clf_type: str, metrics_obj: Any) -> None:
+def _log_metrics_block(
+    tracker, *, pipeline: str, clf_type: str, metrics_obj: Any
+) -> None:
     if tracker is None:
         return
 
@@ -452,7 +457,9 @@ def _log_metrics_block(tracker, *, pipeline: str, clf_type: str, metrics_obj: An
             "meta/pipeline": pipeline,
             "meta/classifier_type": clf_type,
             "meta/classifier_name": str(getattr(metrics_obj, "classifier_name", "")),
-            "meta/best_params_json": json.dumps(best_params, default=str) if best_params is not None else "",
+            "meta/best_params_json": json.dumps(best_params, default=str)
+            if best_params is not None
+            else "",
         },
     )
 
@@ -541,79 +548,86 @@ def _df_to_table(tracker_obj: Any, df: pd.DataFrame, max_rows: int = 500):
     return tracker_obj.Table(data=rows, columns=cols)
 
 
-def _log_table_media(tracker_obj: Any, key: str, df: pd.DataFrame, max_rows: int = 500) -> None:
-    if tracker_obj is None:
-        return
-    if not hasattr(tracker_obj, "Table"):
-        return
+# def _log_table_media(
+#     tracker_obj: Any, key: str, df: pd.DataFrame, max_rows: int = 500
+# ) -> None:
+#     if tracker_obj is None:
+#         return
+#     if not hasattr(tracker_obj, "Table"):
+#         return
 
-    table = _df_to_table(tracker_obj, df, max_rows=max_rows)
-    tracker_obj.log({key: table})
-
-
-def _log_tags(tracker, tags: List[str]) -> None:
-    """
-    Store tags as a single JSON string to keep the dashboard tidy.
-    """
-    if tracker is None:
-        return
-    safe_log(tracker, {"meta/tags_json": json.dumps(tags)})
+#     table = _df_to_table(tracker_obj, df, max_rows=max_rows)
+#     tracker_obj.log({key: table})
 
 
-def _sanitize_df_for_trackio_table(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Prepare a dataframe for Trackio Table serialization:
-      - +/-inf -> NaN -> None
-      - numpy scalars -> python scalars
-      - column names -> strings
-    """
-    def _is_bad_float(v: Any) -> bool:
-        return isinstance(v, (float, np.floating)) and (math.isnan(float(v)) or math.isinf(float(v)))
-
-    df = df.copy()
-    df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df = df.map(lambda x: x.item() if isinstance(x, np.generic) else x)
-    df = df.where(pd.notna(df), None)
-    df = df.map(lambda x: None if _is_bad_float(x) else x)
-    df.columns = [str(c) for c in df.columns]
-    return df
+# def _log_tags(tracker, tags: List[str]) -> None:
+#     """
+#     Store tags as a single JSON string to keep the dashboard tidy.
+#     """
+#     if tracker is None:
+#         return
+#     safe_log(tracker, {"meta/tags_json": json.dumps(tags)})
 
 
-def _df_to_table_png(df: pd.DataFrame, out_path, *, max_rows: int = 60, max_cols: int = 20) -> None:
-    """
-    Render a dataframe to a PNG image (useful when table rendering is flaky).
-    """
-    df = df.copy()
+# def _sanitize_df_for_trackio_table(df: pd.DataFrame) -> pd.DataFrame:
+#     """
+#     Prepare a dataframe for Trackio Table serialization:
+#       - +/-inf -> NaN -> None
+#       - numpy scalars -> python scalars
+#       - column names -> strings
+#     """
 
-    if len(df) > max_rows:
-        df = df.head(max_rows)
-    if df.shape[1] > max_cols:
-        df = df.iloc[:, :max_cols]
+#     def _is_bad_float(v: Any) -> bool:
+#         return isinstance(v, (float, np.floating)) and (
+#             math.isnan(float(v)) or math.isinf(float(v))
+#         )
 
-    df = df.fillna("").astype(str)
+#     df = df.copy()
+#     df.replace([np.inf, -np.inf], np.nan, inplace=True)
+#     df = df.map(lambda x: x.item() if isinstance(x, np.generic) else x)
+#     df = df.where(pd.notna(df), None)
+#     df = df.map(lambda x: None if _is_bad_float(x) else x)
+#     df.columns = [str(c) for c in df.columns]
+#     return df
 
-    row_h = 0.35
-    col_w = 1.8
-    fig_w = max(10, min(30, df.shape[1] * col_w))
-    fig_h = max(4, min(30, (len(df) + 1) * row_h))
 
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    ax.axis("off")
+# def _df_to_table_png(
+#     df: pd.DataFrame, out_path, *, max_rows: int = 60, max_cols: int = 20
+# ) -> None:
+#     """
+#     Render a dataframe to a PNG image (useful when table rendering is flaky).
+#     """
+#     df = df.copy()
 
-    table = ax.table(
-        cellText=df.values,
-        colLabels=df.columns.tolist(),
-        loc="center",
-        cellLoc="left",
-    )
+#     if len(df) > max_rows:
+#         df = df.head(max_rows)
+#     if df.shape[1] > max_cols:
+#         df = df.iloc[:, :max_cols]
 
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 1.2)
+#     df = df.fillna("").astype(str)
 
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+#     row_h = 0.35
+#     col_w = 1.8
+#     fig_w = max(10, min(30, df.shape[1] * col_w))
+#     fig_h = max(4, min(30, (len(df) + 1) * row_h))
+
+#     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+#     ax.axis("off")
+
+#     table = ax.table(
+#         cellText=df.values,
+#         colLabels=df.columns.tolist(),
+#         loc="center",
+#         cellLoc="left",
+#     )
+
+#     table.auto_set_font_size(False)
+#     table.set_fontsize(9)
+#     table.scale(1, 1.2)
+
+#     plt.tight_layout()
+#     fig.savefig(out_path, dpi=200, bbox_inches="tight")
+#     plt.close(fig)
 
 
 def _log_comparison_roc_curve(tracker, output_dir: Path) -> None:
@@ -638,6 +652,7 @@ def _log_comparison_roc_curve(tracker, output_dir: Path) -> None:
             },
         )
 
+
 def _round_numeric(v, ndigits: int = 3):
     """
     Normalize numeric values for display:
@@ -653,15 +668,18 @@ def _round_numeric(v, ndigits: int = 3):
         pass
     return v
 
-def _log_session_outputs_summary_run(config: Dict[str, Any], results_manager: ResultsManager) -> None:
+
+def _log_session_outputs_summary_run(
+    config: DictConfig, results_manager: ResultsManager
+) -> None:
     """
     Log session-level outputs (combined tables/plots) into a summary run.
     """
-    if not (config or {}).get("tracking", {}).get("enabled", False):
+    if not config.tracking.enabled:
         return
 
     output_dir = Path(results_manager.output_dir)
-    dataset_path = str(config.get("data", {}).get("dataset_path", ""))
+    dataset_path = config.data.dataset_path
     dataset_family, data_id = _dataset_family_and_id(dataset_path)
 
     run_name = _make_run_name(config, "summary", pipeline="summary")
@@ -671,7 +689,13 @@ def _log_session_outputs_summary_run(config: Dict[str, Any], results_manager: Re
         return
 
     _log_comparison_roc_curve(tracker, output_dir)
-    tags = _get_tags(config, dataset_family=dataset_family, data_id=data_id, pipeline="summary", clf_type="summary")
+    tags = _get_tags(
+        config,
+        dataset_family=dataset_family,
+        data_id=data_id,
+        pipeline="summary",
+        clf_type="summary",
+    )
     safe_log(tracker, {"meta/tags_json": json.dumps(tags)})
 
     safe_log(tracker, _run_metadata(config, clf_type="summary", pipeline="summary"))
@@ -684,7 +708,9 @@ def _log_session_outputs_summary_run(config: Dict[str, Any], results_manager: Re
 
             # Build a long-form table: one metric per row
             rows = []
-            metric_cols = [c for c in df_raw.columns if c not in ("classifier", "class")]
+            metric_cols = [
+                c for c in df_raw.columns if c not in ("classifier", "class")
+            ]
 
             for _, r in df_raw.iterrows():
                 classifier = str(r.get("classifier", ""))
@@ -698,7 +724,14 @@ def _log_session_outputs_summary_run(config: Dict[str, Any], results_manager: Re
                             vv = None
                         elif isinstance(v, (np.generic,)):
                             v = v.item()
-                            vv = None if (isinstance(v, float) and (math.isnan(v) or math.isinf(v))) else _round_numeric(v)
+                            vv = (
+                                None
+                                if (
+                                    isinstance(v, float)
+                                    and (math.isnan(v) or math.isinf(v))
+                                )
+                                else _round_numeric(v)
+                            )
                         elif isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
                             vv = None
                         else:
@@ -733,7 +766,11 @@ def _log_session_outputs_summary_run(config: Dict[str, Any], results_manager: Re
             )
 
             tracker.log(
-                {"tables/combined_classification_report_wide": tracker.Table(dataframe=df_wide)},
+                {
+                    "tables/combined_classification_report_wide": tracker.Table(
+                        dataframe=df_wide
+                    )
+                },
                 step=0,
             )
             print("[trackio] logged tables/combined_classification_report")
@@ -761,7 +798,9 @@ def _log_session_outputs_summary_run(config: Dict[str, Any], results_manager: Re
 
             df = pd.DataFrame(rows, columns=["model", "param", "value"])
 
-            tracker.log({"tables/best_params_summary": tracker.Table(dataframe=df)}, step=0)
+            tracker.log(
+                {"tables/best_params_summary": tracker.Table(dataframe=df)}, step=0
+            )
 
         except Exception:
             safe_log(tracker, {"tables/best_params_summary_path": str(best_json)})
@@ -769,33 +808,43 @@ def _log_session_outputs_summary_run(config: Dict[str, Any], results_manager: Re
     tracker.finish()
 
 
-def run_evaluation(config: dict, classifiers: list = None):
-    print("Loading dataset...")
-    dataset_df = load_dataset_df(config)
+def run_evaluation(
+    config: dict,
+    console: Console = Console,
+    classifiers: Optional[List[str]] = None,
+):
+    console.print("Loading dataset...", style="bold")
+    dataset_df = load_dataset_df(config, console=console)
     X, y = prepare_data(dataset_df)
-    print(f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features")
+    console.print(f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features")
 
     unique_labels = sorted(set(y))
     class_names = [str(label) for label in unique_labels]
 
     results_manager = ResultsManager(
-
-        config=config,
-        class_names=class_names,
+        config=config, console=console, class_names=class_names
     )
 
     if classifiers is None:
-        classifiers = [config["model"]["classifier"]]
+        classifiers = config.model.classifier
 
-    cv_folds = config.get("evaluation", {}).get("cv_folds", 5)
-    dataset_family, data_id = _dataset_family_and_id(str(config.get("data", {}).get("dataset_path", "")))
+    cv_folds = config.evaluation.cv_folds
+    dataset_family, data_id = _dataset_family_and_id(config.data.dataset_path)
 
     for clf_type in classifiers:
         run_name = _make_run_name(config, clf_type, pipeline="evaluation")
         group_name = _make_group_name(config, pipeline="evaluation")
-        tracker = get_tracker(config, run_name=run_name, group=group_name)
+        tracker = get_tracker(
+            config, run_name=run_name, group=group_name, console=console
+        )
 
-        tags = _get_tags(config, dataset_family=dataset_family, data_id=data_id, pipeline="evaluation", clf_type=clf_type)
+        tags = _get_tags(
+            config,
+            dataset_family=dataset_family,
+            data_id=data_id,
+            pipeline="evaluation",
+            clf_type=clf_type,
+        )
         safe_log(tracker, {"meta/tags_json": json.dumps(tags)})
         for t in tags:
             safe_log(tracker, {f"meta/tag/{t}": "1"})
@@ -808,15 +857,19 @@ def run_evaluation(config: dict, classifiers: list = None):
                 "meta/evaluation/cv_folds": str(cv_folds),
                 "meta/data/n_samples": str(int(X.shape[0])),
                 "meta/data/n_features": str(int(X.shape[1])),
-                "meta/data/dataset_path": str(config.get("data", {}).get("dataset_path", "")),
+                "meta/data/dataset_path": config.data.dataset_path,
             },
         )
-        safe_log(tracker, _run_metadata(config, clf_type=clf_type, pipeline="evaluation"))
+        safe_log(
+            tracker, _run_metadata(config, clf_type=clf_type, pipeline="evaluation")
+        )
 
-        classifier = SKClassifier(clf_type, config)
+        classifier = SKClassifier(clf_type, config, console=console)
         metrics = classifier.evaluate_model(X, y, cv=cv_folds)
 
-        _log_metrics_block(tracker, pipeline="evaluation", clf_type=clf_type, metrics_obj=metrics)
+        _log_metrics_block(
+            tracker, pipeline="evaluation", clf_type=clf_type, metrics_obj=metrics
+        )
         _log_classification_summary_metrics(tracker, metrics)
 
         eval_result = EvaluationResult(
@@ -830,10 +883,20 @@ def run_evaluation(config: dict, classifiers: list = None):
         results_manager.add_result(eval_result)
         results_manager.save_all_results(eval_result)
 
-        _log_eval_images(tracker, Path(results_manager.output_dir), metrics.classifier_name)
-        _log_artifacts(tracker, results_manager, classifier_name=metrics.classifier_name)
+        _log_eval_images(
+            tracker, Path(results_manager.output_dir), metrics.classifier_name
+        )
+        _log_artifacts(
+            tracker, results_manager, classifier_name=metrics.classifier_name
+        )
 
-        safe_log(tracker, {"meta/results/output_dir": str(results_manager.output_dir), "meta/run/status": "completed"})
+        safe_log(
+            tracker,
+            {
+                "meta/results/output_dir": str(results_manager.output_dir),
+                "meta/run/status": "completed",
+            },
+        )
         if tracker is not None:
             tracker.finish()
 
@@ -842,26 +905,34 @@ def run_evaluation(config: dict, classifiers: list = None):
         results_manager.save_comparison_roc_curves()
         _log_session_outputs_summary_run(config, results_manager)
 
-    print(f"\nAll results saved to: {results_manager.output_dir}")
+    console.print(f"\nAll results saved to: {results_manager.output_dir}")
     return results_manager
 
 
 def run_grid_search_experiment(
     config: dict,
+    console: Console = Console,
     classifiers: Optional[List[str]] = None,
     custom_param_grids: Optional[Dict[str, Dict[str, Any]]] = None,
 ):
-    print("Loading dataset...")
-    dataset_df = load_dataset_df(config)
+    console.print("Loading dataset...", style="bold")
+    dataset_df = load_dataset_df(config, console=console)
     X, y = prepare_data(dataset_df)
-    print(f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features")
+    console.print(
+        f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features", style="success"
+    )
 
+    # Get class names
     unique_labels = sorted(set(y))
     class_names = [str(label) for label in unique_labels]
 
-    results_manager = ResultsManager(config=config, class_names=class_names)
+    # Initialize ResultsManager
+    results_manager = ResultsManager(
+        config=config, console=console, class_names=class_names
+    )
 
-    config_param_grids = config.get("model", {}).get("param_grids", {})
+    # Determine classifiers and param grids
+    config_param_grids = config.model.param_grids
     param_grids = {**config_param_grids, **(custom_param_grids or {})}
 
     if classifiers is None:
@@ -871,21 +942,26 @@ def run_grid_search_experiment(
     if not valid_classifiers:
         raise ValueError("No classifiers with param_grids to evaluate.")
 
-    eval_config = config.get("evaluation", {})
-    grid_search_cv = eval_config.get("grid_search_cv_folds", 5)
-    final_eval_cv = eval_config.get("cv_folds", 5)
-    scoring = eval_config.get("grid_search_scoring", "roc_auc")
-    grid_search_random_state = eval_config.get("grid_search_random_state", 42)
-    final_eval_random_state = eval_config.get("final_eval_random_state", 123)
+    # Extract evaluation settings
+    grid_search_cv = config.evaluation.grid_search_cv_folds
+    final_eval_cv = config.evaluation.cv_folds
+    scoring = config.evaluation.grid_search_scoring
+    grid_search_random_state = config.evaluation.grid_search_random_state
+    final_eval_random_state = config.evaluation.final_eval_random_state
 
-    dataset_family, data_id = _dataset_family_and_id(str(config.get("data", {}).get("dataset_path", "")))
+    # Extract dataset info for tagging
+    dataset_family, data_id = _dataset_family_and_id(config.data.dataset_path)
     best_params_summary: Dict[str, Dict[str, Any]] = {}
 
+    # Run experiments for each classifier
     for clf_type in valid_classifiers:
-        run_name = _make_run_name(config, clf_type, pipeline="grid_search_with_final_eval")
+        run_name = _make_run_name(
+            config, clf_type, pipeline="grid_search_with_final_eval"
+        )
         group_name = _make_group_name(config, pipeline="grid_search_with_final_eval")
         tracker = get_tracker(config, run_name=run_name, group=group_name)
 
+        # Log tags
         tags = _get_tags(
             config,
             dataset_family=dataset_family,
@@ -905,15 +981,25 @@ def run_grid_search_experiment(
                 "meta/evaluation/grid_search_cv_folds": str(grid_search_cv),
                 "meta/evaluation/final_eval_cv_folds": str(final_eval_cv),
                 "meta/evaluation/scoring": str(scoring),
-                "meta/evaluation/grid_search_random_state": str(grid_search_random_state),
+                "meta/evaluation/grid_search_random_state": str(
+                    grid_search_random_state
+                ),
                 "meta/evaluation/final_eval_random_state": str(final_eval_random_state),
                 "meta/data/n_samples": str(int(X.shape[0])),
                 "meta/data/n_features": str(int(X.shape[1])),
-                "meta/data/dataset_path": str(config.get("data", {}).get("dataset_path", "")),
+                "meta/data/dataset_path": str(
+                    config.get("data", {}).get("dataset_path", "")
+                ),
             },
         )
-        safe_log(tracker, _run_metadata(config, clf_type=clf_type, pipeline="grid_search_with_final_eval"))
+        safe_log(
+            tracker,
+            _run_metadata(
+                config, clf_type=clf_type, pipeline="grid_search_with_final_eval"
+            ),
+        )
 
+        # Run grid search with final evaluation
         classifier = SKClassifier(clf_type, config)
         metrics = classifier.grid_search_with_final_eval(
             X,
@@ -929,9 +1015,16 @@ def run_grid_search_experiment(
 
         best_params_summary[clf_type] = metrics.best_params
 
-        _log_metrics_block(tracker, pipeline="grid_search_with_final_eval", clf_type=clf_type, metrics_obj=metrics)
+        # Log metrics and results
+        _log_metrics_block(
+            tracker,
+            pipeline="grid_search_with_final_eval",
+            clf_type=clf_type,
+            metrics_obj=metrics,
+        )
         _log_classification_summary_metrics(tracker, metrics)
 
+        # Save evaluation result
         eval_result = EvaluationResult(
             classifier_name=metrics.classifier_name,
             y_true=metrics.y_true,
@@ -944,10 +1037,21 @@ def run_grid_search_experiment(
         results_manager.add_result(eval_result)
         results_manager.save_all_results(eval_result)
 
-        _log_eval_images(tracker, Path(results_manager.output_dir), metrics.classifier_name)
-        _log_artifacts(tracker, results_manager, classifier_name=metrics.classifier_name)
+        # Log images and artifacts
+        _log_eval_images(
+            tracker, Path(results_manager.output_dir), metrics.classifier_name
+        )
+        _log_artifacts(
+            tracker, results_manager, classifier_name=metrics.classifier_name
+        )
 
-        safe_log(tracker, {"meta/results/output_dir": str(results_manager.output_dir), "meta/run/status": "completed"})
+        safe_log(
+            tracker,
+            {
+                "meta/results/output_dir": str(results_manager.output_dir),
+                "meta/run/status": "completed",
+            },
+        )
         if tracker is not None:
             tracker.finish()
 
@@ -958,7 +1062,9 @@ def run_grid_search_experiment(
     _save_best_params_summary(Path(results_manager.output_dir), best_params_summary)
     _log_session_outputs_summary_run(config, results_manager)
 
-    print(f"\nAll results saved to: {results_manager.output_dir}")
+    console.print(
+        f"\nAll results saved to: {results_manager.output_dir}", style="success"
+    )
     return results_manager
 
 
@@ -969,29 +1075,37 @@ def _save_best_params_summary(output_dir: Path, best_params: Dict[str, Dict]) ->
     print(f"\n✓ Best params summary saved: {summary_path}")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--publish_to_main", action="store_true")
-    parser.add_argument(
-        "--eval_only",
-        action="store_true",
-        help="Run evaluation only (no grid search / hyperparameter tuning).",
-    )
-    args, _ = parser.parse_known_args()
+@hydra.main(version_base=None, config_path="configs", config_name="base")
+def main(cfg: DictConfig) -> None:
+    console = RichConsoleManager.get_console()
+    console.print(OmegaConf.to_yaml(cfg), style="warning")
 
-    config = load_config()
-
-    dataset_path = str(config.get("data", {}).get("dataset_path", ""))
-    _, data_id = _dataset_family_and_id(dataset_path)
-
-    if args.publish_to_main:
+    _, data_id = _dataset_family_and_id(cfg.data.dataset_path)
+    if cfg.tracking.publish_to_main:
+        # Confirm before proceeding
         _confirm_publish_to_main()
-
-    _apply_tracking_routing(config, data_id=data_id, publish_to_main=bool(args.publish_to_main))
-
-    if args.eval_only:
+    if cfg.tracking.enabled:
+        # Apply tracking routing based on publish_to_main flag
+        _apply_tracking_routing(
+            cfg,
+            data_id=data_id,
+            console=console,
+        )
+        console.print(f"Tracking configured. Project: {cfg.tracking.project}")
+    if cfg.mode.eval_only:
         # Simple evaluation (no hyperparameter tuning)
-        run_evaluation(config)
+        console.print("Running evaluation only...", style="warning")
+        run_evaluation(config=cfg, console=console, classifiers=cfg.model.classifier)
     else:
         # Default behavior: grid search + final eval
-        run_grid_search_experiment(config, classifiers=["logreg", "rf", "svm", "mlp"])
+        console.print("Running grid search experiment...", style="warning")
+        run_grid_search_experiment(
+            config=cfg,
+            console=console,
+            classifiers=["logreg", "rf", "svm", "mlp"],
+        )
+
+
+if __name__ == "__main__":
+    # Execute the main entry point function
+    main()
