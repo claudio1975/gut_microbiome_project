@@ -8,15 +8,15 @@ import hydra
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from rich.console import Console
-
+from omegaconf import DictConfig, OmegaConf
 from data_loading import load_dataset_df
 from modules.classifier import SKClassifier
 from utils.data_utils import prepare_data
 from utils.evaluation_utils import EvaluationResult, ResultsManager
-from utils.tracking_utils import get_tracker, safe_log
-from omegaconf import DictConfig, OmegaConf
 from utils.generic_utils import RichConsoleManager
 from utils.tracking_utils import (
+    get_tracker,
+    safe_log,
     _apply_tracking_routing,
     _confirm_publish_to_main,
     _dataset_family_and_id,

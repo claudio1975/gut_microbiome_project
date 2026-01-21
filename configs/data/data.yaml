@@ -24,7 +24,11 @@ use_unified_embeddings: true
 
 hugging_face:
   download_path: "huggingface_datasets"
-  dataset_name: ""          # overridden per dataset config
+  dataset_name: ""
+  # Overwritten by dataset configs
+  # Examples: "Tanaka", "Diabimmune", "Goldberg", "Gadir"
   base_repo_url: "https://huggingface.co/datasets/hugging-science"
   pull_from_huggingface: true
-  csv_filename: "month_2.csv" # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg, "gadir_all_months.csv" for Gadir
+  csv_filename: "month_2.csv"
+  # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg,
+  # "gadir_all_months.csv" for Gadir, "month_2.csv" for Tanaka

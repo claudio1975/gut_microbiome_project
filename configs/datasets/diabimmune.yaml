@@ -1,0 +1,8 @@
+# @package data
+_target_dataset_name: "diabimmune"
+
+dataset_path: "data_preprocessing/datasets/diabimmune/Month_3.csv"
+
+hugging_face:
+  dataset_name: "Diabimmune"
+  csv_filename: "Month_3.csv"

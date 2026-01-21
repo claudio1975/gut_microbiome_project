@@ -1,0 +1,8 @@
+# @package data
+_target_dataset_name: "tanaka"
+
+dataset_path: "data_preprocessing/datasets/tanaka/month_2.csv"
+
+hugging_face:
+  dataset_name: "Tanaka"
+  csv_filename: "month_2.csv"

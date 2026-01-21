@@ -1,13 +1,11 @@
-# Base config shared by all datasets
-
-defaults: # these are the sub-config files for specific details, noee for the moment.
-  - _self_ # this makes the top-level config take priority over sub-configs, see https://hydra.cc/docs/upgrades/1.0_to_1.1/default_composition_order/
+defaults:
+  - _self_
   - model: model
   - data: data
+  - datasets: tanaka  # default dataset
 
 mode:
-  eval_only: false    # overridden by CLI
-
+  eval_only: false
 
 evaluation:
   results_output_dir: "eval_results"
@@ -23,7 +21,7 @@ valid_dataset_names: [Tanaka, Diabimmune, Goldberg, Gadir]
 tracking:
   enabled: false
   publish_to_main: false
-  project: "gut-microbiome-experiments"
+  project: "gut-microbiome-${data._target_dataset_name}"
   run_name: null
-  tags: ["gridsearch", "unbiased-cv"]
-  space_id: "vaibhav2507/gut-microbiome"
+  tags: ["${data._target_dataset_name}", "gridsearch", "unbiased-cv"]
+  space_id: "vaibhav2507/gut-microbiome-${data._target_dataset_name}-test"
