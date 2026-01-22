@@ -1421,7 +1421,7 @@ def load_dataset_df(config: DictConfig, console: Console) -> pd.DataFrame:
         generate_microbiome_embeddings_h5(
             dna_embeddings_h5_path,
             microbiome_embeddings_dir,
-            config["data"]["mirobiome_transformer_checkpoint"],
+            config["data"]["microbiome_transformer_checkpoint"],
             device=config["data"]["device"],
         )
     else:
@@ -1491,7 +1491,7 @@ if __name__ == "__main__":
         generate_microbiome_embeddings_h5(
             dna_embeddings_h5_path,
             microbiome_embeddings_dir,
-            config["data"]["mirobiome_transformer_checkpoint"],
+            config["data"]["microbiome_transformer_checkpoint"],
             device=config["data"]["device"],
         )
     else:

@@ -149,7 +149,7 @@ data:
   dataset_path: "data_preprocessing/datasets/diabimmune/Month_2.csv"
 
   # Model checkpoint (downloaded above)
-  mirobiome_transformer_checkpoint: "data/checkpoint_epoch_0_final_epoch3_conf00.pt"
+  microbiome_transformer_checkpoint: "data/checkpoint_epoch_0_final_epoch3_conf00.pt"
 
   # Device: "cpu", "cuda", or "mps"
   device: "cpu"

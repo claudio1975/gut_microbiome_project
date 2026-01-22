@@ -11,7 +11,7 @@ dna_embeddings_dir: "data_preprocessing/dna_embeddings"
 microbiome_embeddings_dir: "data_preprocessing/microbiome_embeddings"
 
 # MicrobiomeTransformer checkpoint path
-mirobiome_transformer_checkpoint: "data/checkpoint_epoch_0_final_epoch3_conf00.pt"
+microbiome_transformer_checkpoint: "data/checkpoint_epoch_0_final_epoch3_conf00.pt"
 
 # ProkBERT model name
 embedding_model: "neuralbioinfo/prokbert-mini-long"
