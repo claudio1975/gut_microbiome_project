@@ -35,7 +35,7 @@ from utils.tracking_utils import (
 
 
 def run_evaluation(
-    config: dict,
+    config: DictConfig,
     console: Console = Console,
     classifiers: Optional[List[str]] = None,
 ):
@@ -136,7 +136,7 @@ def run_evaluation(
 
 
 def run_grid_search_experiment(
-    config: dict,
+    config: DictConfig,
     console: Console = Console,
     classifiers: Optional[List[str]] = None,
     custom_param_grids: Optional[Dict[str, Dict[str, Any]]] = None,

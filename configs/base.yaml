@@ -24,4 +24,4 @@ tracking:
   project: "gut-microbiome-${data._target_dataset_name}"
   run_name: null
   tags: ["${data._target_dataset_name}", "gridsearch", "unbiased-cv"]
-  space_id: "vaibhav2507/gut-microbiome-${data._target_dataset_name}-test"
+  space_id: "hugging-science/AI4FA-logging-${data._target_dataset_name}"
