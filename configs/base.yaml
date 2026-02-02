@@ -15,6 +15,14 @@ evaluation:
   grid_search_random_state: 20260101
   final_eval_random_state: 20260101
   save_normalized_cm: true
+  split:
+    enabled: false
+    auto_split:
+      test_size: 0.3
+      random_state: 20260101
+    pre_split:
+      train_dataset_path: null
+      test_dataset_path: null
 
 valid_dataset_names: [Tanaka, Diabimmune, Goldberg, Gadir]
 

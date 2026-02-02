@@ -168,6 +168,9 @@ class ResultsManager:
         # Add additional info
         report_df["classifier"] = result.classifier_name
         report_df["cv_folds"] = result.cv_folds
+        report_df["evaluation_mode"] = (
+            "holdout" if result.cv_folds == 0 else "cross_validation"
+        )
 
         # Add ROC-AUC if probabilities available
         if result.has_probabilities:
@@ -252,8 +255,12 @@ class ResultsManager:
             ax.set_xlabel("False Positive Rate", fontsize=12)
             ax.set_ylabel("True Positive Rate", fontsize=12)
             tuned_text = " (tuned)" if result.best_params else ""
+            eval_text = (
+                "Holdout Test Set" if result.cv_folds == 0
+                else f"{result.cv_folds}-Fold CV"
+            )
             ax.set_title(
-                f"ROC Curve - {result.classifier_name}{tuned_text}\n"
+                f"ROC Curve - {result.classifier_name}{tuned_text} [{eval_text}]\n"
                 f"Dataset: {self.dataset_name}/{self.data_source}",
                 fontsize=13,
             )
@@ -321,8 +328,12 @@ class ResultsManager:
         # Styling
         norm_text = f" (normalized: {normalize})" if normalize else ""
         tuned_text = " (tuned)" if result.best_params else ""
+        eval_text = (
+            "Holdout Test Set" if result.cv_folds == 0
+            else f"{result.cv_folds}-Fold CV"
+        )
         ax.set_title(
-            f"Confusion Matrix - {result.classifier_name}{tuned_text}{norm_text}\n"
+            f"Confusion Matrix - {result.classifier_name}{tuned_text}{norm_text} [{eval_text}]\n"
             f"Dataset: {self.dataset_name}/{self.data_source}",
             fontsize=13,
         )
@@ -500,8 +511,14 @@ class ResultsManager:
         ax.set_ylim([0.0, 1.05])
         ax.set_xlabel("False Positive Rate", fontsize=12)
         ax.set_ylabel("True Positive Rate", fontsize=12)
+        # Determine eval mode from first result
+        first_result = results_with_probs[0]
+        eval_text = (
+            "Holdout Test Set" if first_result.cv_folds == 0
+            else f"{first_result.cv_folds}-Fold CV"
+        )
         ax.set_title(
-            f"ROC Curve Comparison\nDataset: {self.dataset_name}/{self.data_source}",
+            f"ROC Curve Comparison [{eval_text}]\nDataset: {self.dataset_name}/{self.data_source}",
             fontsize=14,
         )
         ax.legend(loc="lower right", fontsize=10)

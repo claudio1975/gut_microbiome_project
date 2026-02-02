@@ -7,6 +7,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pandas as pd
 import yaml
+from sklearn.model_selection import train_test_split
 
 
 def _deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -89,6 +90,29 @@ def load_config() -> Dict[str, Any]:
         _deep_set(config, ("tracking", "space_id"), args.space_id)
 
     return config
+
+
+def split_dataset_df(
+    dataset_df: pd.DataFrame, test_size: float, random_state: int
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Perform a stratified train/test split on a dataset DataFrame.
+
+    Args:
+        dataset_df: DataFrame with at least a 'label' column.
+        test_size: Fraction of samples to hold out for testing.
+        random_state: Random seed for reproducibility.
+
+    Returns:
+        (train_df, test_df) both with reset indices.
+    """
+    train_df, test_df = train_test_split(
+        dataset_df,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=dataset_df["label"],
+    )
+    return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
 
 
 def prepare_data(dataset_df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:

@@ -333,6 +333,58 @@ Load existing models and evaluate:
 python main.py datasets=gadir mode.eval_only=True
 ```
 
+#### Mode 4: Train/Test Split Evaluation
+
+Instead of evaluating on the full dataset with cross-validation, you can hold out a test set. Grid search (if any) runs on the training set only, and final performance is measured on the held-out test set.
+
+**Auto split** — a single dataset is automatically split into train and test using a stratified split that preserves class balance:
+
+```bash
+# Default 80/20 split with grid search on train set
+python main.py datasets=tanaka evaluation.split.enabled=true
+
+# Custom split ratio and seed
+python main.py datasets=tanaka evaluation.split.enabled=true \
+    evaluation.split.auto_split.test_size=0.3 \
+    evaluation.split.auto_split.random_state=42
+
+# Eval only (no grid search) — useful when hyperparams are already known
+python main.py datasets=tanaka evaluation.split.enabled=true mode.eval_only=true
+```
+
+**Pre-split** — provide two separate CSV files for train and test:
+
+```bash
+python main.py evaluation.split.enabled=true \
+    evaluation.split.pre_split.train_dataset_path=data/train.csv \
+    evaluation.split.pre_split.test_dataset_path=data/test.csv
+```
+
+When pre-split paths are provided they take priority over auto-split.
+
+**Behavior summary:**
+
+| `split.enabled` | `eval_only` | What happens |
+| :--- | :--- | :--- |
+| `false` | `false` | Default: GridSearchCV + final CV on full dataset |
+| `false` | `true` | Simple k-fold CV on full dataset |
+| `true` | `false` | GridSearchCV on train set + holdout test evaluation |
+| `true` | `true` | Fit on train set + holdout test evaluation (no grid search) |
+
+**Config reference** (`configs/base.yaml`):
+
+```yaml
+evaluation:
+  split:
+    enabled: false              # set to true to activate
+    auto_split:
+      test_size: 0.2            # fraction held out for testing
+      random_state: 20260101    # seed for reproducible splits
+    pre_split:
+      train_dataset_path: null  # path to train CSV
+      test_dataset_path: null   # path to test CSV
+```
+
 ### Advanced Usage
 
 #### Override Hyperparameter Grids

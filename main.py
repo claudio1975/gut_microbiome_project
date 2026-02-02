@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from rich.console import Console
 from omegaconf import DictConfig, OmegaConf
-from data_loading import load_dataset_df
+from data_loading import load_dataset_df, load_train_test_datasets
 from modules.classifier import SKClassifier
 from utils.data_utils import prepare_data
 from utils.evaluation_utils import EvaluationResult, ResultsManager
@@ -294,6 +294,182 @@ def run_grid_search_experiment(
     return results_manager
 
 
+def run_train_test_experiment(
+    config: DictConfig,
+    console: Console = Console,
+    classifiers: Optional[List[str]] = None,
+    custom_param_grids: Optional[Dict[str, Dict[str, Any]]] = None,
+):
+    """Run experiment using a held-out test set instead of full-dataset CV."""
+    console.print("Loading train/test datasets...", style="bold")
+    train_df, test_df = load_train_test_datasets(config, console=console)
+    X_train, y_train = prepare_data(train_df)
+    X_test, y_test = prepare_data(test_df)
+
+    console.print(
+        f"Train set: {X_train.shape[0]} samples, {X_train.shape[1]} features",
+        style="success",
+    )
+    console.print(
+        f"Test set: {X_test.shape[0]} samples, {X_test.shape[1]} features",
+        style="success",
+    )
+    if X_test.shape[0] < 10:
+        console.print(
+            "Warning: Test set has fewer than 10 samples. Results may be unreliable.",
+            style="warning",
+        )
+
+    # Determine split mode for metadata
+    split_cfg = config.evaluation.split
+    pre_train = split_cfg.pre_split.train_dataset_path
+    pre_test = split_cfg.pre_split.test_dataset_path
+    split_mode = "pre_split" if (pre_train is not None and pre_test is not None) else "auto"
+
+    unique_labels = sorted(set(y_train) | set(y_test))
+    class_names = [str(label) for label in unique_labels]
+
+    results_manager = ResultsManager(
+        config=config, console=console, class_names=class_names
+    )
+
+    eval_only = config.mode.eval_only
+
+    # Determine classifiers and param grids
+    if eval_only:
+        if classifiers is None:
+            classifiers = config.model.classifier
+        valid_classifiers = classifiers
+        param_grids = {}
+    else:
+        config_param_grids = config.model.param_grids
+        param_grids = {**config_param_grids, **(custom_param_grids or {})}
+        if classifiers is None:
+            classifiers = list(param_grids.keys())
+        valid_classifiers = [c for c in classifiers if c in param_grids]
+        if not valid_classifiers:
+            raise ValueError("No classifiers with param_grids to evaluate.")
+
+    grid_search_cv = config.evaluation.grid_search_cv_folds
+    scoring = config.evaluation.grid_search_scoring
+    grid_search_random_state = config.evaluation.grid_search_random_state
+
+    dataset_family, data_id = _dataset_family_and_id(config.data.dataset_path)
+    best_params_summary: Dict[str, Dict[str, Any]] = {}
+
+    for clf_type in valid_classifiers:
+        pipeline_name = "train_test_eval" if eval_only else "train_test_gridsearch"
+        run_name = _make_run_name(config, clf_type, pipeline=pipeline_name)
+        group_name = _make_group_name(config, pipeline=pipeline_name)
+        tracker = get_tracker(config, run_name=run_name, group=group_name, console=console)
+
+        tags = _get_tags(
+            config,
+            dataset_family=dataset_family,
+            data_id=data_id,
+            pipeline=pipeline_name,
+            clf_type=clf_type,
+        )
+        safe_log(tracker, {"meta/tags_json": json.dumps(tags)})
+        for t in tags:
+            safe_log(tracker, {f"meta/tag/{t}": "1"})
+
+        safe_log(
+            tracker,
+            {
+                "meta/pipeline": pipeline_name,
+                "meta/classifier/type": str(clf_type),
+                "meta/data/n_train_samples": str(int(X_train.shape[0])),
+                "meta/data/n_test_samples": str(int(X_test.shape[0])),
+                "meta/data/n_features": str(int(X_train.shape[1])),
+                "meta/data/split_mode": split_mode,
+                "meta/data/dataset_path": config.data.dataset_path,
+            },
+        )
+
+        if split_mode == "auto":
+            safe_log(
+                tracker,
+                {
+                    "meta/data/split_test_size": str(split_cfg.auto_split.test_size),
+                    "meta/data/split_random_state": str(split_cfg.auto_split.random_state),
+                },
+            )
+
+        safe_log(
+            tracker,
+            _run_metadata(config, clf_type=clf_type, pipeline=pipeline_name),
+        )
+
+        classifier = SKClassifier(clf_type, config, console=console)
+
+        if eval_only:
+            metrics = classifier.train_test_evaluate(
+                X_train, y_train, X_test, y_test, verbose=True,
+            )
+        else:
+            metrics = classifier.train_test_evaluate(
+                X_train,
+                y_train,
+                X_test,
+                y_test,
+                param_grid=param_grids[clf_type],
+                grid_search_cv=grid_search_cv,
+                scoring=scoring,
+                grid_search_random_state=grid_search_random_state,
+                verbose=True,
+            )
+            best_params_summary[clf_type] = metrics.best_params
+
+        _log_metrics_block(
+            tracker, pipeline=pipeline_name, clf_type=clf_type, metrics_obj=metrics
+        )
+        _log_classification_summary_metrics(tracker, metrics)
+
+        eval_result = EvaluationResult(
+            classifier_name=metrics.classifier_name,
+            y_true=metrics.y_true,
+            y_pred=metrics.y_pred,
+            y_prob=metrics.y_prob,
+            cv_folds=metrics.cv_folds,
+            additional_metrics={"best_params": metrics.best_params} if metrics.best_params else {},
+        )
+
+        results_manager.add_result(eval_result)
+        results_manager.save_all_results(eval_result)
+
+        _log_eval_images(
+            tracker, Path(results_manager.output_dir), metrics.classifier_name
+        )
+        _log_artifacts(
+            tracker, results_manager, classifier_name=metrics.classifier_name
+        )
+
+        safe_log(
+            tracker,
+            {
+                "meta/results/output_dir": str(results_manager.output_dir),
+                "meta/run/status": "completed",
+            },
+        )
+        if tracker is not None:
+            tracker.finish()
+
+    if len(valid_classifiers) > 1:
+        results_manager.save_combined_report()
+        results_manager.save_comparison_roc_curves()
+
+    if best_params_summary:
+        _save_best_params_summary(Path(results_manager.output_dir), best_params_summary)
+
+    _log_session_outputs_summary_run(config, results_manager)
+
+    console.print(
+        f"\nAll results saved to: {results_manager.output_dir}", style="success"
+    )
+    return results_manager
+
+
 @hydra.main(version_base=None, config_path="configs", config_name="base")
 def main(cfg: DictConfig) -> None:
     console = RichConsoleManager.get_console()
@@ -314,7 +490,39 @@ def main(cfg: DictConfig) -> None:
             console=console,
         )
         console.print(f"Tracking configured. Project: {cfg.tracking.project}")
-    if cfg.mode.eval_only:
+    split_enabled = cfg.evaluation.split.enabled
+
+    # Validate split config
+    if split_enabled:
+        pre_train = cfg.evaluation.split.pre_split.train_dataset_path
+        pre_test = cfg.evaluation.split.pre_split.test_dataset_path
+        has_pre_split = pre_train is not None and pre_test is not None
+        has_auto_split = cfg.evaluation.split.auto_split.test_size is not None
+        if not has_pre_split and not has_auto_split:
+            raise ValueError(
+                "evaluation.split.enabled=true but neither auto_split nor "
+                "pre_split is properly configured. Provide auto_split.test_size "
+                "or both pre_split.train_dataset_path and pre_split.test_dataset_path."
+            )
+
+    if split_enabled:
+        # Train/test split evaluation mode
+        if cfg.mode.eval_only:
+            console.print(
+                "Running train/test holdout evaluation (no grid search)...",
+                style="warning",
+            )
+        else:
+            console.print(
+                "Running grid search on train set + holdout test evaluation...",
+                style="warning",
+            )
+        run_train_test_experiment(
+            config=cfg,
+            console=console,
+            classifiers=cfg.model.classifier,
+        )
+    elif cfg.mode.eval_only:
         # Simple evaluation (no hyperparameter tuning)
         console.print("Running evaluation only...", style="warning")
         run_evaluation(config=cfg, console=console, classifiers=cfg.model.classifier)

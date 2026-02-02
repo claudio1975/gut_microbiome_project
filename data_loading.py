@@ -19,9 +19,9 @@ from tqdm import tqdm
 import yaml
 import os
 import subprocess
-from utils.data_utils import load_config
+from utils.data_utils import load_config, split_dataset_df
 from modules.model import MicrobiomeTransformer
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
 
 
@@ -1448,6 +1448,54 @@ def load_dataset_df(config: DictConfig, console: Console) -> pd.DataFrame:
         style="success",
     )
     return dataset_df
+
+
+def load_train_test_datasets(
+    config: DictConfig, console: Console
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Load train and test DataFrames according to the evaluation.split config.
+
+    - **Auto split**: loads the full dataset via ``load_dataset_df`` then
+      performs a stratified split using ``split_dataset_df``.
+    - **Pre-split**: loads two separate CSVs by temporarily overriding
+      ``config.data.dataset_path`` and calling ``load_dataset_df`` twice.
+
+    Pre-split takes priority when both are configured.
+
+    Returns:
+        (train_df, test_df)
+    """
+    split_cfg = config.evaluation.split
+    pre_train = split_cfg.pre_split.train_dataset_path
+    pre_test = split_cfg.pre_split.test_dataset_path
+
+    if pre_train is not None and pre_test is not None:
+        # --- Pre-split mode ---
+        console.print("Loading pre-split train/test datasets...", style="bold")
+        cfg_dict = OmegaConf.to_container(config, resolve=True)
+
+        # Load train set
+        cfg_dict["data"]["dataset_path"] = pre_train
+        train_config = OmegaConf.create(cfg_dict)
+        train_df = load_dataset_df(train_config, console=console)
+
+        # Load test set
+        cfg_dict["data"]["dataset_path"] = pre_test
+        test_config = OmegaConf.create(cfg_dict)
+        test_df = load_dataset_df(test_config, console=console)
+
+        return train_df, test_df
+    else:
+        # --- Auto split mode ---
+        console.print("Loading dataset for auto train/test split...", style="bold")
+        full_df = load_dataset_df(config, console=console)
+        train_df, test_df = split_dataset_df(
+            full_df,
+            test_size=split_cfg.auto_split.test_size,
+            random_state=split_cfg.auto_split.random_state,
+        )
+        return train_df, test_df
 
 
 # ==================== Example Usage ====================

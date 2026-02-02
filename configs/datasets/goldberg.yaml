@@ -5,4 +5,4 @@ dataset_path: "data_preprocessing/datasets/goldberg/all_groups.csv"
 
 hugging_face:
   dataset_name: "Goldberg"
-  csv_filename: "all_groups.csv"
+  csv_filename: "all_groups_balanced.csv"

@@ -286,6 +286,139 @@ class SKClassifier:
 
         return metrics
 
+    def train_test_evaluate(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_test: np.ndarray,
+        y_test: np.ndarray,
+        param_grid: Dict[str, Any] = None,
+        grid_search_cv: int = 5,
+        scoring: str = "roc_auc",
+        grid_search_random_state: int = 42,
+        verbose: bool = True,
+    ) -> EvaluationMetrics:
+        """
+        Evaluate a classifier using a held-out test set.
+
+        Optionally runs GridSearchCV on the training set first to find
+        the best hyperparameters, then fits on the full training set and
+        predicts on the test set.
+
+        Args:
+            X_train: Training feature matrix
+            y_train: Training labels
+            X_test: Test feature matrix
+            y_test: Test labels
+            param_grid: Optional parameter grid for grid search (on train set)
+            grid_search_cv: Number of CV folds for grid search
+            scoring: Scoring metric for grid search
+            grid_search_random_state: Random state for grid search CV
+            verbose: Whether to print progress
+
+        Returns:
+            EvaluationMetrics with cv_folds=0 (signals holdout evaluation)
+        """
+        if verbose:
+            self.console.print(f"\n{'=' * 60}")
+            self.console.print(
+                f"Train/Test Evaluation: {self.name}", style="bold green"
+            )
+            self.console.print(
+                f"Train samples: {X_train.shape[0]}, Test samples: {X_test.shape[0]}",
+                style="dim",
+            )
+            self.console.print(f"{'=' * 60}")
+
+        # Phase 1: Optional grid search on training set
+        if param_grid is not None:
+            if verbose:
+                self.console.print(
+                    f"\nPhase 1: Grid Search on train set "
+                    f"(random_state={grid_search_random_state})",
+                    style="bold",
+                )
+                self.console.print(f"Parameter grid: {param_grid}", style="dim")
+
+            pipeline_param_grid = self._prefix_params_for_pipeline(param_grid)
+
+            skf_grid = StratifiedKFold(
+                n_splits=grid_search_cv,
+                shuffle=True,
+                random_state=grid_search_random_state,
+            )
+
+            grid_search = GridSearchCV(
+                estimator=self.pipeline,
+                param_grid=pipeline_param_grid,
+                scoring=scoring,
+                cv=skf_grid,
+                n_jobs=-1,
+                verbose=1 if verbose else 0,
+            )
+
+            grid_search.fit(X_train, y_train)
+
+            best_params = self._unprefix_params(grid_search.best_params_)
+            best_score = grid_search.best_score_
+
+            if verbose:
+                self.console.print(
+                    f"\nBest parameters: {best_params}", style="bold yellow"
+                )
+                self.console.print(
+                    f"Best {scoring} score (grid search CV): {best_score:.4f}",
+                    style="bold yellow",
+                )
+
+            self.set_params(**best_params)
+
+        # Phase 2: Fit on full training set and predict on test set
+        if verbose:
+            self.console.print(
+                "\nPhase 2: Fit on train set, evaluate on held-out test set",
+                style="bold",
+            )
+
+        self.pipeline.fit(X_train, y_train)
+
+        y_pred = self.pipeline.predict(X_test)
+        y_prob = None
+        try:
+            y_prob_all = self.pipeline.predict_proba(X_test)
+            if y_prob_all.shape[1] == 2:
+                y_prob = y_prob_all[:, 1]
+            else:
+                y_prob = y_prob_all
+        except Exception as e:
+            if verbose:
+                self.console.print(
+                    f"Warning: Could not get probability predictions: {e}"
+                )
+
+        metrics = EvaluationMetrics(
+            classifier_name=self.name,
+            y_true=y_test,
+            y_pred=y_pred,
+            y_prob=y_prob,
+            cv_folds=0,
+            best_params=self.best_params,
+        )
+
+        if verbose:
+            self.console.print(
+                f"\nHoldout Test Set Classification Report:", style="bold"
+            )
+            self.console.print(
+                classification_report(y_test, y_pred), style="cyan"
+            )
+            if metrics.roc_auc is not None:
+                self.console.print(
+                    f"ROC-AUC Score: {metrics.roc_auc:.4f}", style="bold magenta"
+                )
+
+        return metrics
+
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """Fit the pipeline on training data."""
         self.console.print(f"Fitting {self.name}...", style="bold green")
