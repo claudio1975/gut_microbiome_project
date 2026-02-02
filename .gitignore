@@ -57,3 +57,5 @@ huggingface_datasets/
 
 # Evaluation results
 eval_results/
+
+deepmicro/
