@@ -1451,49 +1451,188 @@ def load_dataset_df(config: DictConfig, console: Console) -> pd.DataFrame:
 
 
 def load_train_test_datasets(
-    config: DictConfig, console: Console
+    config: DictConfig,
+    console: Optional[Console] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Load train and test DataFrames according to the evaluation.split config.
+    Load train/test datasets based on the configured split mode.
 
-    - **Auto split**: loads the full dataset via ``load_dataset_df`` then
-      performs a stratified split using ``split_dataset_df``.
-    - **Pre-split**: loads two separate CSVs by temporarily overriding
-      ``config.data.dataset_path`` and calling ``load_dataset_df`` twice.
-
-    Pre-split takes priority when both are configured.
+    Split modes:
+      - "none": Raises error (use load_dataset_df directly for full dataset)
+      - "auto": Stratified split of single dataset
+      - "manual": Load separate pre-split train/test files
 
     Returns:
-        (train_df, test_df)
+        (train_df, test_df) with validated schema alignment and leakage checks
     """
-    split_cfg = config.evaluation.split
-    pre_train = split_cfg.pre_split.train_dataset_path
-    pre_test = split_cfg.pre_split.test_dataset_path
+    if console is None:
+        console = Console()
 
-    if pre_train is not None and pre_test is not None:
-        # --- Pre-split mode ---
-        console.print("Loading pre-split train/test datasets...", style="bold")
+    split_cfg = config.evaluation.split
+    mode = split_cfg.mode.lower()
+
+    valid_modes = ("none", "auto", "manual")
+    if mode not in valid_modes:
+        raise ValueError(
+            f"Invalid split mode: '{mode}'. "
+            f"Must be one of: {valid_modes}"
+        )
+
+    if mode == "none":
+        raise ValueError(
+            "Split mode is 'none' but load_train_test_datasets was called. "
+            "Use load_dataset_df directly for full dataset evaluation, "
+            "or set evaluation.split.mode to 'auto' or 'manual'."
+        )
+
+    elif mode == "manual":
+        # --- Manual pre-split mode ---
+        train_path_str = split_cfg.manual.train_dataset_path
+        test_path_str = split_cfg.manual.test_dataset_path
+
+        # Validate paths are configured
+        if train_path_str is None or test_path_str is None:
+            raise ValueError(
+                "Split mode is 'manual' but paths are not configured.\n"
+                "Set both:\n"
+                "  - evaluation.split.manual.train_dataset_path\n"
+                "  - evaluation.split.manual.test_dataset_path"
+            )
+
+        console.print(
+            f"[bold]Loading manual train/test split...[/bold]", style="bold"
+        )
+
+        # Validate paths exist
+        train_path = Path(train_path_str)
+        test_path = Path(test_path_str)
+
+        if not train_path.exists():
+            raise FileNotFoundError(
+                f"Train dataset path does not exist: {train_path}\n"
+                f"Check evaluation.split.manual.train_dataset_path"
+            )
+        if not test_path.exists():
+            raise FileNotFoundError(
+                f"Test dataset path does not exist: {test_path}\n"
+                f"Check evaluation.split.manual.test_dataset_path"
+            )
+
+        # Catch same-file error
+        if train_path.resolve() == test_path.resolve():
+            raise ValueError(
+                "CRITICAL: Train and test paths point to the same file!\n"
+                f"  Train: {train_path}\n"
+                f"  Test: {test_path}"
+            )
+
         cfg_dict = OmegaConf.to_container(config, resolve=True)
 
         # Load train set
-        cfg_dict["data"]["dataset_path"] = pre_train
+        console.print(f"  Loading train set from: {train_path_str}", style="dim")
+        cfg_dict["data"]["dataset_path"] = train_path_str
         train_config = OmegaConf.create(cfg_dict)
         train_df = load_dataset_df(train_config, console=console)
 
         # Load test set
-        cfg_dict["data"]["dataset_path"] = pre_test
+        console.print(f"  Loading test set from: {test_path_str}", style="dim")
+        cfg_dict["data"]["dataset_path"] = test_path_str
         test_config = OmegaConf.create(cfg_dict)
         test_df = load_dataset_df(test_config, console=console)
 
+        # --- Schema alignment check ---
+        train_cols = set(train_df.columns)
+        test_cols = set(test_df.columns)
+
+        if train_cols != test_cols:
+            missing_in_test = train_cols - test_cols
+            missing_in_train = test_cols - train_cols
+            error_msg = "Schema mismatch between train and test datasets:\n"
+            if missing_in_test:
+                error_msg += f"  Columns in train but not test: {missing_in_test}\n"
+            if missing_in_train:
+                error_msg += f"  Columns in test but not train: {missing_in_train}\n"
+            raise ValueError(error_msg)
+
+        # --- Sample ID overlap check (data leakage) ---
+        if "sid" in train_df.columns and "sid" in test_df.columns:
+            train_sids = set(train_df["sid"])
+            test_sids = set(test_df["sid"])
+            overlap = train_sids & test_sids
+
+            if overlap:
+                raise ValueError(
+                    f"CRITICAL: Data leakage detected! {len(overlap)} sample IDs "
+                    f"appear in BOTH train and test sets.\n"
+                    f"  Overlapping IDs (first 5): {list(overlap)[:5]}\n"
+                    f"  Did you split BEFORE creating the CSV files?"
+                )
+
+        # --- Label distribution check ---
+        if "label" in train_df.columns and "label" in test_df.columns:
+            train_labels = train_df["label"].value_counts(normalize=True)
+            test_labels = test_df["label"].value_counts(normalize=True)
+
+            console.print("\n  Label distributions:", style="dim")
+            console.print(f"    Train: {dict(train_labels.round(3))}", style="dim")
+            console.print(f"    Test:  {dict(test_labels.round(3))}", style="dim")
+
+            # Warn if distributions are very different
+            for label in train_labels.index:
+                if label in test_labels.index:
+                    diff = abs(train_labels[label] - test_labels[label])
+                    if diff > 0.2:  # More than 20% difference
+                        console.print(
+                            f"  ⚠️  Warning: Label '{label}' has very different "
+                            f"proportions in train ({train_labels[label]:.1%}) vs "
+                            f"test ({test_labels[label]:.1%})",
+                            style="warning",
+                        )
+
+        console.print(
+            f"\n✓ Manual split datasets loaded: "
+            f"{len(train_df)} train, {len(test_df)} test samples",
+            style="success",
+        )
         return train_df, test_df
-    else:
+
+    else:  # mode == "auto"
         # --- Auto split mode ---
-        console.print("Loading dataset for auto train/test split...", style="bold")
+        test_size = split_cfg.auto.test_size
+        random_state = split_cfg.auto.random_state
+
+        if test_size is None:
+            raise ValueError(
+                "Split mode is 'auto' but test_size is not configured.\n"
+                "Set evaluation.split.auto.test_size (e.g., 0.2 or 0.3)"
+            )
+
+        console.print(
+            f"[bold]Loading dataset for auto split "
+            f"(test_size={test_size}, random_state={random_state})...[/bold]",
+            style="bold",
+        )
+
         full_df = load_dataset_df(config, console=console)
+
+        # Validate we have enough samples
+        min_samples = max(10, int(1 / test_size) + 1)
+        if len(full_df) < min_samples:
+            console.print(
+                f"⚠️  Warning: Dataset has only {len(full_df)} samples. "
+                f"Consider using more data for reliable train/test evaluation.",
+                style="warning",
+            )
+
         train_df, test_df = split_dataset_df(
             full_df,
-            test_size=split_cfg.auto_split.test_size,
-            random_state=split_cfg.auto_split.random_state,
+            test_size=test_size,
+            random_state=random_state,
+        )
+
+        console.print(
+            f"✓ Auto-split complete: {len(train_df)} train, {len(test_df)} test samples",
+            style="success",
         )
         return train_df, test_df
 

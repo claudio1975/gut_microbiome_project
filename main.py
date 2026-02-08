@@ -322,9 +322,7 @@ def run_train_test_experiment(
 
     # Determine split mode for metadata
     split_cfg = config.evaluation.split
-    pre_train = split_cfg.pre_split.train_dataset_path
-    pre_test = split_cfg.pre_split.test_dataset_path
-    split_mode = "pre_split" if (pre_train is not None and pre_test is not None) else "auto"
+    split_mode = split_cfg.mode.lower()
 
     unique_labels = sorted(set(y_train) | set(y_test))
     class_names = [str(label) for label in unique_labels]
@@ -391,8 +389,8 @@ def run_train_test_experiment(
             safe_log(
                 tracker,
                 {
-                    "meta/data/split_test_size": str(split_cfg.auto_split.test_size),
-                    "meta/data/split_random_state": str(split_cfg.auto_split.random_state),
+                    "meta/data/split_test_size": str(split_cfg.auto.test_size),
+                    "meta/data/split_random_state": str(split_cfg.auto.random_state),
                 },
             )
 
@@ -490,22 +488,32 @@ def main(cfg: DictConfig) -> None:
             console=console,
         )
         console.print(f"Tracking configured. Project: {cfg.tracking.project}")
-    split_enabled = cfg.evaluation.split.enabled
+    split_mode = cfg.evaluation.split.mode.lower()
 
     # Validate split config
-    if split_enabled:
-        pre_train = cfg.evaluation.split.pre_split.train_dataset_path
-        pre_test = cfg.evaluation.split.pre_split.test_dataset_path
-        has_pre_split = pre_train is not None and pre_test is not None
-        has_auto_split = cfg.evaluation.split.auto_split.test_size is not None
-        if not has_pre_split and not has_auto_split:
+    if split_mode not in ("none", "auto", "manual"):
+        raise ValueError(
+            f"Invalid split mode: '{split_mode}'. "
+            f"Must be one of: none, auto, manual"
+        )
+
+    if split_mode == "manual":
+        train_path = cfg.evaluation.split.manual.train_dataset_path
+        test_path = cfg.evaluation.split.manual.test_dataset_path
+        if train_path is None or test_path is None:
             raise ValueError(
-                "evaluation.split.enabled=true but neither auto_split nor "
-                "pre_split is properly configured. Provide auto_split.test_size "
-                "or both pre_split.train_dataset_path and pre_split.test_dataset_path."
+                "evaluation.split.mode='manual' but paths are not configured.\n"
+                "Set both evaluation.split.manual.train_dataset_path and "
+                "evaluation.split.manual.test_dataset_path."
+            )
+    elif split_mode == "auto":
+        if cfg.evaluation.split.auto.test_size is None:
+            raise ValueError(
+                "evaluation.split.mode='auto' but test_size is not configured.\n"
+                "Set evaluation.split.auto.test_size (e.g., 0.2 or 0.3)."
             )
 
-    if split_enabled:
+    if split_mode in ("auto", "manual"):
         # Train/test split evaluation mode
         if cfg.mode.eval_only:
             console.print(
