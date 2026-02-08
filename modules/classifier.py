@@ -89,6 +89,24 @@ class SKClassifier:
         """Remove pipeline prefix from parameter names."""
         return {k.replace("classifier__", ""): v for k, v in params.items()}
 
+    def _validate_no_data_leakage(
+        self, X_train: np.ndarray, X_test: np.ndarray
+    ) -> None:
+        """Detect obvious data leakage (e.g., identical rows across train/test)."""
+        if X_train.shape[1] != X_test.shape[1]:
+            return  # Different features → can't compare
+
+        # Check for duplicate rows (naive but catches gross errors)
+        train_set = set(map(tuple, X_train.round(6)))  # Round to handle float noise
+        test_set = set(map(tuple, X_test.round(6)))
+        leakage = train_set & test_set
+
+        if leakage:
+            raise ValueError(
+                f"CRITICAL: Data leakage detected! {len(leakage)} identical samples "
+                f"found in both train and test sets. Did you split BEFORE preprocessing?"
+            )
+
     def set_params(self, **params):
         """Set classifier parameters and reinitialize pipeline."""
         self.pipeline = self._init_pipeline(params)
@@ -329,6 +347,9 @@ class SKClassifier:
                 style="dim",
             )
             self.console.print(f"{'=' * 60}")
+
+        # Validate no data leakage between train and test sets
+        self._validate_no_data_leakage(X_train, X_test)
 
         # Phase 1: Optional grid search on training set
         if param_grid is not None:
