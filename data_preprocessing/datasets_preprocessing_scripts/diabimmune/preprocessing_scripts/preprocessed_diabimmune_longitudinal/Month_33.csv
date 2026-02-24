@@ -1,0 +1,3 @@
+sid,patient_id,country,label,allergen_class
+SRS1719402,P009291,RUS,1,2
+SRS1719576,P010096,RUS,0,0

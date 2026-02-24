@@ -1,0 +1,36 @@
+defaults:
+  - _self_
+  - model: model
+  - data: data
+  - datasets: tanaka  # default dataset
+
+mode:
+  eval_only: false
+
+evaluation:
+  results_output_dir: "eval_results"
+  cv_folds: 5
+  grid_search_cv_folds: 5
+  grid_search_scoring: "roc_auc"
+  grid_search_random_state: 20260101
+  final_eval_random_state: 20260101
+  save_normalized_cm: true
+  split:
+    # Split mode: "none" (no split, use full dataset), "auto" (stratified split), or "manual" (pre-split files)
+    mode: "none"  # Options: none, auto, manual
+    auto:
+      test_size: 0.3
+      random_state: 20260101
+    manual:
+      train_dataset_path: null
+      test_dataset_path: null
+
+valid_dataset_names: [Tanaka, Diabimmune, Goldberg, Gadir]
+
+tracking:
+  enabled: false
+  publish_to_main: false
+  project: "gut-microbiome-${data._target_dataset_name}"
+  run_name: null
+  tags: ["${data._target_dataset_name}", "gridsearch", "unbiased-cv"]
+  space_id: "hugging-science/AI4FA-logging-${data._target_dataset_name}"

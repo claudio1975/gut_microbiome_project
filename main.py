@@ -1,252 +1,549 @@
-# Main script to run train + evaluation
+# main.py
+# Entry point for model training/evaluation + Trackio logging.
+
+from __future__ import annotations
 
 import json
+import hydra
 from pathlib import Path
-from typing import List, Optional, Dict, Any
-from data_loading import load_dataset_df
+from typing import Any, Dict, List, Optional
+from rich.console import Console
+from omegaconf import DictConfig, OmegaConf
+from data_loading import load_dataset_df, load_train_test_datasets
 from modules.classifier import SKClassifier
-from utils.evaluation_utils import ResultsManager, EvaluationResult
-from utils.data_utils import load_config, prepare_data
-
-def run_evaluation(config: dict, classifiers: list = None):
-    """
-    Run evaluation pipeline for specified classifiers (no grid search).
-    
-    Args:
-        config: Configuration dictionary
-        classifiers: List of classifier types to evaluate. 
-                    If None, uses classifier from config.
-                    Options: ["logreg", "rf", "svm", "mlp"]
-    """
-    # Load and prepare data
-    print("Loading dataset...")
-    dataset_df = load_dataset_df(config)
-    X, y = prepare_data(dataset_df)
-    print(f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features")
-    
-    # Get unique class labels for reporting
-    unique_labels = sorted(set(y))
-    class_names = [str(label) for label in unique_labels]
-    
-    # Initialize ResultsManager
-    results_manager = ResultsManager(
-        results_output_dir=config['evaluation']['results_output_dir'],
-        dataset_path=config['data']['dataset_path'],
-        class_names=class_names
-    )
-    
-    # Determine which classifiers to run
-    if classifiers is None:
-        classifiers = [config['model']['classifier']]
-    
-    # Cross-validation folds
-    cv_folds = config.get('evaluation', {}).get('cv_folds', 5)
-    
-    # Run evaluation for each classifier
-    for clf_type in classifiers:
-        print(f"\n{'='*60}")
-        print(f"Evaluating: {clf_type}")
-        print(f"{'='*60}")
-        
-        # Initialize classifier
-        classifier = SKClassifier(clf_type, config)
-        
-        # Run evaluation
-        metrics = classifier.evaluate_model(X, y, cv=cv_folds)
-        
-        # Convert to EvaluationResult for storage
-        eval_result = EvaluationResult(
-            classifier_name=metrics.classifier_name,
-            y_true=metrics.y_true,
-            y_pred=metrics.y_pred,
-            y_prob=metrics.y_prob,
-            cv_folds=metrics.cv_folds
-        )
-        
-        # Add to results manager
-        results_manager.add_result(eval_result)
-        
-        # Save individual results
-        results_manager.save_all_results(eval_result)
-    
-    # Save combined report if multiple classifiers
-    if len(classifiers) > 1:
-        results_manager.save_combined_report()
-        results_manager.save_comparison_roc_curves()
-    
-    print(f"\n{'='*60}")
-    print(f"All results saved to: {results_manager.output_dir}")
-    print(f"{'='*60}")
-    
-    return results_manager
+from utils.data_utils import prepare_data
+from utils.evaluation_utils import EvaluationResult, ResultsManager
+from utils.generic_utils import RichConsoleManager
+from utils.tracking_utils import (
+    get_tracker,
+    safe_log,
+    _apply_tracking_routing,
+    _confirm_publish_to_main,
+    _dataset_family_and_id,
+    _get_tags,
+    _log_artifacts,
+    _log_classification_summary_metrics,
+    _log_eval_images,
+    _log_metrics_block,
+    _make_group_name,
+    _make_run_name,
+    _patch_httpx_nan_guard,
+    _run_metadata,
+    _save_best_params_summary,
+    _log_session_outputs_summary_run,
+)
 
 
-def run_grid_search_experiment(
-    config: dict, 
+def run_evaluation(
+    config: DictConfig,
+    console: Console = Console,
     classifiers: Optional[List[str]] = None,
-    custom_param_grids: Optional[Dict[str, Dict[str, Any]]] = None
 ):
-    """
-    Run grid search with unbiased final evaluation for specified classifiers.
-    
-    This addresses the optimistic bias problem when you can't have a held-out test set:
-    1. Grid search uses StratifiedKFold with random_state=42 to find best params
-    2. Final evaluation uses StratifiedKFold with random_state=123 (fresh splits)
-    
-    Only the final unbiased results are saved.
-    
-    Args:
-        config: Configuration dictionary
-        classifiers: List of classifier types to evaluate.
-                    If None, uses all classifiers with param_grids in config.
-                    Options: ["logreg", "rf", "svm", "mlp"]
-        custom_param_grids: Optional dict of custom param grids to override config.
-                           Format: {"logreg": {"C": [0.1, 1], ...}, ...}
-    
-    Returns:
-        ResultsManager with all results
-    """
-    # Load and prepare data
-    print("Loading dataset...")
-    dataset_df = load_dataset_df(config)
+    console.print("Loading dataset...", style="bold")
+    dataset_df = load_dataset_df(config, console=console)
     X, y = prepare_data(dataset_df)
-    print(f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features")
-    
-    # Get unique class labels for reporting
+    console.print(f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features")
+
     unique_labels = sorted(set(y))
     class_names = [str(label) for label in unique_labels]
-    
-    # Initialize ResultsManager
+
     results_manager = ResultsManager(
-        results_output_dir=config['evaluation']['results_output_dir'],
-        dataset_path=config['data']['dataset_path'],
-        class_names=class_names
+        config=config, console=console, class_names=class_names
     )
-    
-    # Get param grids from config
-    config_param_grids = config.get('model', {}).get('param_grids', {})
-    
-    # Merge with custom param grids (custom takes precedence)
-    if custom_param_grids:
-        param_grids = {**config_param_grids, **custom_param_grids}
-    else:
-        param_grids = config_param_grids
-    
-    # Determine which classifiers to run
+
     if classifiers is None:
-        classifiers = list(param_grids.keys())
-    
-    # Filter to classifiers that have param grids
-    valid_classifiers = []
+        classifiers = config.model.classifier
+
+    cv_folds = config.evaluation.cv_folds
+    dataset_family, data_id = _dataset_family_and_id(config.data.dataset_path)
+
     for clf_type in classifiers:
-        if clf_type in param_grids:
-            valid_classifiers.append(clf_type)
-        else:
-            print(f"Warning: No param_grid found for {clf_type}, skipping.")
-    
-    if not valid_classifiers:
-        raise ValueError("No classifiers with param_grids to evaluate. "
-                        "Add param_grids to config or provide custom_param_grids.")
-    
-    # Get evaluation settings
-    eval_config = config.get('evaluation', {})
-    grid_search_cv = eval_config.get('grid_search_cv_folds', 5)
-    final_eval_cv = eval_config.get('cv_folds', 5)
-    scoring = eval_config.get('grid_search_scoring', 'roc_auc')
-    grid_search_random_state = eval_config.get('grid_search_random_state', 42)
-    final_eval_random_state = eval_config.get('final_eval_random_state', 123)
-    
-    # Store best params for summary
-    best_params_summary = {}
-    
-    # Run grid search + final eval for each classifier
-    for clf_type in valid_classifiers:
-        param_grid = param_grids[clf_type]
-        
-        # Initialize classifier
-        classifier = SKClassifier(clf_type, config)
-        
-        # Run grid search with unbiased final evaluation
-        metrics = classifier.grid_search_with_final_eval(
-            X, y,
-            param_grid=param_grid,
-            grid_search_cv=grid_search_cv,
-            final_eval_cv=final_eval_cv,
-            scoring=scoring,
-            grid_search_random_state=grid_search_random_state,
-            final_eval_random_state=final_eval_random_state,
-            verbose=True
+        run_name = _make_run_name(config, clf_type, pipeline="evaluation")
+        group_name = _make_group_name(config, pipeline="evaluation")
+        tracker = get_tracker(
+            config, run_name=run_name, group=group_name, console=console
         )
-        
-        best_params_summary[clf_type] = metrics.best_params
-        
-        # Convert to EvaluationResult for storage
+
+        tags = _get_tags(
+            config,
+            dataset_family=dataset_family,
+            data_id=data_id,
+            pipeline="evaluation",
+            clf_type=clf_type,
+        )
+        safe_log(tracker, {"meta/tags_json": json.dumps(tags)})
+        for t in tags:
+            safe_log(tracker, {f"meta/tag/{t}": "1"})
+
+        safe_log(
+            tracker,
+            {
+                "meta/pipeline": "evaluation",
+                "meta/classifier/type": str(clf_type),
+                "meta/evaluation/cv_folds": str(cv_folds),
+                "meta/data/n_samples": str(int(X.shape[0])),
+                "meta/data/n_features": str(int(X.shape[1])),
+                "meta/data/dataset_path": config.data.dataset_path,
+            },
+        )
+        safe_log(
+            tracker, _run_metadata(config, clf_type=clf_type, pipeline="evaluation")
+        )
+
+        classifier = SKClassifier(clf_type, config, console=console)
+        metrics = classifier.evaluate_model(X, y, cv=cv_folds)
+
+        _log_metrics_block(
+            tracker, pipeline="evaluation", clf_type=clf_type, metrics_obj=metrics
+        )
+        _log_classification_summary_metrics(tracker, metrics)
+
         eval_result = EvaluationResult(
             classifier_name=metrics.classifier_name,
             y_true=metrics.y_true,
             y_pred=metrics.y_pred,
             y_prob=metrics.y_prob,
             cv_folds=metrics.cv_folds,
-            additional_metrics={'best_params': metrics.best_params}
         )
-        
-        # Add to results manager
+
         results_manager.add_result(eval_result)
-        
-        # Save individual results
         results_manager.save_all_results(eval_result)
-    
-    # Save combined report if multiple classifiers
-    if len(valid_classifiers) > 1:
+
+        _log_eval_images(
+            tracker, Path(results_manager.output_dir), metrics.classifier_name
+        )
+        _log_artifacts(
+            tracker, results_manager, classifier_name=metrics.classifier_name
+        )
+
+        safe_log(
+            tracker,
+            {
+                "meta/results/output_dir": str(results_manager.output_dir),
+                "meta/run/status": "completed",
+            },
+        )
+        if tracker is not None:
+            tracker.finish()
+
+    if len(classifiers) > 1:
         results_manager.save_combined_report()
         results_manager.save_comparison_roc_curves()
-    
-    # Save best params summary
-    _save_best_params_summary(results_manager.output_dir, best_params_summary)
-    
-    print(f"\n{'='*60}")
-    print(f"Grid Search Experiment Complete!")
-    print(f"All results saved to: {results_manager.output_dir}")
-    print(f"{'='*60}")
-    
-    # Print best params summary
-    print("\nBest Parameters Summary:")
-    for clf_type, params in best_params_summary.items():
-        print(f"  {clf_type}: {params}")
-    
+        _log_session_outputs_summary_run(config, results_manager)
+
+    console.print(f"\nAll results saved to: {results_manager.output_dir}")
     return results_manager
 
 
-def _save_best_params_summary(output_dir: Path, best_params: Dict[str, Dict]):
-    """Save a summary of best parameters to a JSON file."""
-    summary_path = output_dir / "best_params_summary.json"
-    with open(summary_path, 'w') as f:
-        json.dump(best_params, f, indent=2, default=str)
-    
-    print(f"\n✓ Best params summary saved: {summary_path}")
+def run_grid_search_experiment(
+    config: DictConfig,
+    console: Console = Console,
+    classifiers: Optional[List[str]] = None,
+    custom_param_grids: Optional[Dict[str, Dict[str, Any]]] = None,
+):
+    console.print("Loading dataset...", style="bold")
+    dataset_df = load_dataset_df(config, console=console)
+    X, y = prepare_data(dataset_df)
+    console.print(
+        f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features", style="success"
+    )
+
+    # Get class names
+    unique_labels = sorted(set(y))
+    class_names = [str(label) for label in unique_labels]
+
+    # Initialize ResultsManager
+    results_manager = ResultsManager(
+        config=config, console=console, class_names=class_names
+    )
+
+    # Determine classifiers and param grids
+    config_param_grids = config.model.param_grids
+    param_grids = {**config_param_grids, **(custom_param_grids or {})}
+
+    if classifiers is None:
+        classifiers = list(param_grids.keys())
+
+    valid_classifiers = [c for c in classifiers if c in param_grids]
+    if not valid_classifiers:
+        raise ValueError("No classifiers with param_grids to evaluate.")
+
+    # Extract evaluation settings
+    grid_search_cv = config.evaluation.grid_search_cv_folds
+    final_eval_cv = config.evaluation.cv_folds
+    scoring = config.evaluation.grid_search_scoring
+    grid_search_random_state = config.evaluation.grid_search_random_state
+    final_eval_random_state = config.evaluation.final_eval_random_state
+
+    # Extract dataset info for tagging
+    dataset_family, data_id = _dataset_family_and_id(config.data.dataset_path)
+    best_params_summary: Dict[str, Dict[str, Any]] = {}
+
+    # Run experiments for each classifier
+    for clf_type in valid_classifiers:
+        run_name = _make_run_name(
+            config, clf_type, pipeline="grid_search_with_final_eval"
+        )
+        group_name = _make_group_name(config, pipeline="grid_search_with_final_eval")
+        tracker = get_tracker(config, run_name=run_name, group=group_name)
+
+        # Log tags
+        tags = _get_tags(
+            config,
+            dataset_family=dataset_family,
+            data_id=data_id,
+            pipeline="grid_search_with_final_eval",
+            clf_type=clf_type,
+        )
+        safe_log(tracker, {"meta/tags_json": json.dumps(tags)})
+        for t in tags:
+            safe_log(tracker, {f"meta/tag/{t}": "1"})
+
+        safe_log(
+            tracker,
+            {
+                "meta/pipeline": "grid_search_with_final_eval",
+                "meta/classifier/type": str(clf_type),
+                "meta/evaluation/grid_search_cv_folds": str(grid_search_cv),
+                "meta/evaluation/final_eval_cv_folds": str(final_eval_cv),
+                "meta/evaluation/scoring": str(scoring),
+                "meta/evaluation/grid_search_random_state": str(
+                    grid_search_random_state
+                ),
+                "meta/evaluation/final_eval_random_state": str(final_eval_random_state),
+                "meta/data/n_samples": str(int(X.shape[0])),
+                "meta/data/n_features": str(int(X.shape[1])),
+                "meta/data/dataset_path": str(
+                    config.get("data", {}).get("dataset_path", "")
+                ),
+            },
+        )
+        safe_log(
+            tracker,
+            _run_metadata(
+                config, clf_type=clf_type, pipeline="grid_search_with_final_eval"
+            ),
+        )
+
+        # Run grid search with final evaluation
+        classifier = SKClassifier(clf_type, config)
+        metrics = classifier.grid_search_with_final_eval(
+            X,
+            y,
+            param_grid=param_grids[clf_type],
+            grid_search_cv=grid_search_cv,
+            final_eval_cv=final_eval_cv,
+            scoring=scoring,
+            grid_search_random_state=grid_search_random_state,
+            final_eval_random_state=final_eval_random_state,
+            verbose=True,
+        )
+
+        best_params_summary[clf_type] = metrics.best_params
+
+        # Log metrics and results
+        _log_metrics_block(
+            tracker,
+            pipeline="grid_search_with_final_eval",
+            clf_type=clf_type,
+            metrics_obj=metrics,
+        )
+        _log_classification_summary_metrics(tracker, metrics)
+
+        # Save evaluation result
+        eval_result = EvaluationResult(
+            classifier_name=metrics.classifier_name,
+            y_true=metrics.y_true,
+            y_pred=metrics.y_pred,
+            y_prob=metrics.y_prob,
+            cv_folds=metrics.cv_folds,
+            additional_metrics={"best_params": metrics.best_params},
+        )
+
+        results_manager.add_result(eval_result)
+        results_manager.save_all_results(eval_result)
+
+        # Log images and artifacts
+        _log_eval_images(
+            tracker, Path(results_manager.output_dir), metrics.classifier_name
+        )
+        _log_artifacts(
+            tracker, results_manager, classifier_name=metrics.classifier_name
+        )
+
+        safe_log(
+            tracker,
+            {
+                "meta/results/output_dir": str(results_manager.output_dir),
+                "meta/run/status": "completed",
+            },
+        )
+        if tracker is not None:
+            tracker.finish()
+
+    if len(valid_classifiers) > 1:
+        results_manager.save_combined_report()
+        results_manager.save_comparison_roc_curves()
+
+    _save_best_params_summary(Path(results_manager.output_dir), best_params_summary)
+    _log_session_outputs_summary_run(config, results_manager)
+
+    console.print(
+        f"\nAll results saved to: {results_manager.output_dir}", style="success"
+    )
+    return results_manager
+
+
+def run_train_test_experiment(
+    config: DictConfig,
+    console: Console = Console,
+    classifiers: Optional[List[str]] = None,
+    custom_param_grids: Optional[Dict[str, Dict[str, Any]]] = None,
+):
+    """Run experiment using a held-out test set instead of full-dataset CV."""
+    console.print("Loading train/test datasets...", style="bold")
+    train_df, test_df = load_train_test_datasets(config, console=console)
+    X_train, y_train = prepare_data(train_df)
+    X_test, y_test = prepare_data(test_df)
+
+    console.print(
+        f"Train set: {X_train.shape[0]} samples, {X_train.shape[1]} features",
+        style="success",
+    )
+    console.print(
+        f"Test set: {X_test.shape[0]} samples, {X_test.shape[1]} features",
+        style="success",
+    )
+    if X_test.shape[0] < 10:
+        console.print(
+            "Warning: Test set has fewer than 10 samples. Results may be unreliable.",
+            style="warning",
+        )
+
+    # Determine split mode for metadata
+    split_cfg = config.evaluation.split
+    split_mode = split_cfg.mode.lower()
+
+    unique_labels = sorted(set(y_train) | set(y_test))
+    class_names = [str(label) for label in unique_labels]
+
+    results_manager = ResultsManager(
+        config=config, console=console, class_names=class_names
+    )
+
+    eval_only = config.mode.eval_only
+
+    # Determine classifiers and param grids
+    if eval_only:
+        if classifiers is None:
+            classifiers = config.model.classifier
+        valid_classifiers = classifiers
+        param_grids = {}
+    else:
+        config_param_grids = config.model.param_grids
+        param_grids = {**config_param_grids, **(custom_param_grids or {})}
+        if classifiers is None:
+            classifiers = list(param_grids.keys())
+        valid_classifiers = [c for c in classifiers if c in param_grids]
+        if not valid_classifiers:
+            raise ValueError("No classifiers with param_grids to evaluate.")
+
+    grid_search_cv = config.evaluation.grid_search_cv_folds
+    scoring = config.evaluation.grid_search_scoring
+    grid_search_random_state = config.evaluation.grid_search_random_state
+
+    dataset_family, data_id = _dataset_family_and_id(config.data.dataset_path)
+    best_params_summary: Dict[str, Dict[str, Any]] = {}
+
+    for clf_type in valid_classifiers:
+        pipeline_name = "train_test_eval" if eval_only else "train_test_gridsearch"
+        run_name = _make_run_name(config, clf_type, pipeline=pipeline_name)
+        group_name = _make_group_name(config, pipeline=pipeline_name)
+        tracker = get_tracker(config, run_name=run_name, group=group_name, console=console)
+
+        tags = _get_tags(
+            config,
+            dataset_family=dataset_family,
+            data_id=data_id,
+            pipeline=pipeline_name,
+            clf_type=clf_type,
+        )
+        safe_log(tracker, {"meta/tags_json": json.dumps(tags)})
+        for t in tags:
+            safe_log(tracker, {f"meta/tag/{t}": "1"})
+
+        safe_log(
+            tracker,
+            {
+                "meta/pipeline": pipeline_name,
+                "meta/classifier/type": str(clf_type),
+                "meta/data/n_train_samples": str(int(X_train.shape[0])),
+                "meta/data/n_test_samples": str(int(X_test.shape[0])),
+                "meta/data/n_features": str(int(X_train.shape[1])),
+                "meta/data/split_mode": split_mode,
+                "meta/data/dataset_path": config.data.dataset_path,
+            },
+        )
+
+        if split_mode == "auto":
+            safe_log(
+                tracker,
+                {
+                    "meta/data/split_test_size": str(split_cfg.auto.test_size),
+                    "meta/data/split_random_state": str(split_cfg.auto.random_state),
+                },
+            )
+
+        safe_log(
+            tracker,
+            _run_metadata(config, clf_type=clf_type, pipeline=pipeline_name),
+        )
+
+        classifier = SKClassifier(clf_type, config, console=console)
+
+        if eval_only:
+            metrics = classifier.train_test_evaluate(
+                X_train, y_train, X_test, y_test, verbose=True,
+            )
+        else:
+            metrics = classifier.train_test_evaluate(
+                X_train,
+                y_train,
+                X_test,
+                y_test,
+                param_grid=param_grids[clf_type],
+                grid_search_cv=grid_search_cv,
+                scoring=scoring,
+                grid_search_random_state=grid_search_random_state,
+                verbose=True,
+            )
+            best_params_summary[clf_type] = metrics.best_params
+
+        _log_metrics_block(
+            tracker, pipeline=pipeline_name, clf_type=clf_type, metrics_obj=metrics
+        )
+        _log_classification_summary_metrics(tracker, metrics)
+
+        eval_result = EvaluationResult(
+            classifier_name=metrics.classifier_name,
+            y_true=metrics.y_true,
+            y_pred=metrics.y_pred,
+            y_prob=metrics.y_prob,
+            cv_folds=metrics.cv_folds,
+            additional_metrics={"best_params": metrics.best_params} if metrics.best_params else {},
+        )
+
+        results_manager.add_result(eval_result)
+        results_manager.save_all_results(eval_result)
+
+        _log_eval_images(
+            tracker, Path(results_manager.output_dir), metrics.classifier_name
+        )
+        _log_artifacts(
+            tracker, results_manager, classifier_name=metrics.classifier_name
+        )
+
+        safe_log(
+            tracker,
+            {
+                "meta/results/output_dir": str(results_manager.output_dir),
+                "meta/run/status": "completed",
+            },
+        )
+        if tracker is not None:
+            tracker.finish()
+
+    if len(valid_classifiers) > 1:
+        results_manager.save_combined_report()
+        results_manager.save_comparison_roc_curves()
+
+    if best_params_summary:
+        _save_best_params_summary(Path(results_manager.output_dir), best_params_summary)
+
+    _log_session_outputs_summary_run(config, results_manager)
+
+    console.print(
+        f"\nAll results saved to: {results_manager.output_dir}", style="success"
+    )
+    return results_manager
+
+
+@hydra.main(version_base=None, config_path="configs", config_name="base")
+def main(cfg: DictConfig) -> None:
+    console = RichConsoleManager.get_console()
+    console.print(OmegaConf.to_yaml(cfg), style="warning")
+
+    # Apply HTTPX NaN guard patch
+    _patch_httpx_nan_guard()
+
+    _, data_id = _dataset_family_and_id(cfg.data.dataset_path)
+    if cfg.tracking.publish_to_main:
+        # Confirm before proceeding
+        _confirm_publish_to_main()
+    if cfg.tracking.enabled:
+        # Apply tracking routing based on publish_to_main flag
+        _apply_tracking_routing(
+            cfg,
+            data_id=data_id,
+            console=console,
+        )
+        console.print(f"Tracking configured. Project: {cfg.tracking.project}")
+    split_mode = cfg.evaluation.split.mode.lower()
+
+    # Validate split config
+    if split_mode not in ("none", "auto", "manual"):
+        raise ValueError(
+            f"Invalid split mode: '{split_mode}'. "
+            f"Must be one of: none, auto, manual"
+        )
+
+    if split_mode == "manual":
+        train_path = cfg.evaluation.split.manual.train_dataset_path
+        test_path = cfg.evaluation.split.manual.test_dataset_path
+        if train_path is None or test_path is None:
+            raise ValueError(
+                "evaluation.split.mode='manual' but paths are not configured.\n"
+                "Set both evaluation.split.manual.train_dataset_path and "
+                "evaluation.split.manual.test_dataset_path."
+            )
+    elif split_mode == "auto":
+        if cfg.evaluation.split.auto.test_size is None:
+            raise ValueError(
+                "evaluation.split.mode='auto' but test_size is not configured.\n"
+                "Set evaluation.split.auto.test_size (e.g., 0.2 or 0.3)."
+            )
+
+    if split_mode in ("auto", "manual"):
+        # Train/test split evaluation mode
+        if cfg.mode.eval_only:
+            console.print(
+                "Running train/test holdout evaluation (no grid search)...",
+                style="warning",
+            )
+        else:
+            console.print(
+                "Running grid search on train set + holdout test evaluation...",
+                style="warning",
+            )
+        run_train_test_experiment(
+            config=cfg,
+            console=console,
+            classifiers=cfg.model.classifier,
+        )
+    elif cfg.mode.eval_only:
+        # Simple evaluation (no hyperparameter tuning)
+        console.print("Running evaluation only...", style="warning")
+        run_evaluation(config=cfg, console=console, classifiers=cfg.model.classifier)
+    else:
+        # Default behavior: grid search + final eval
+        console.print("Running grid search experiment...", style="warning")
+        run_grid_search_experiment(
+            config=cfg,
+            console=console,
+            classifiers=cfg.model.classifier,
+        )
 
 
 if __name__ == "__main__":
-    # Load config
-    config = load_config()
-    
-    # ===== OPTION 1: Simple evaluation (no hyperparameter tuning) =====
-    # run_evaluation(config)
-    
-    # ===== OPTION 2: Simple evaluation with multiple classifiers =====
-    # run_evaluation(config, classifiers=["logreg", "rf", "svm", "mlp"])
-    
-    # ===== OPTION 3: Grid search with unbiased final evaluation =====
-    # This is the recommended approach when you can't have a held-out test set.
-    # It finds best hyperparameters, then evaluates on fresh CV splits.
-    run_grid_search_experiment(config, classifiers=["logreg", "rf", "svm", "mlp"])
-    
-    # ===== OPTION 4: Grid search for specific classifiers =====
-    # run_grid_search_experiment(config, classifiers=["logreg", "mlp"])
-    
-    # ===== OPTION 5: Grid search with custom param grids =====
-    # custom_grids = {
-    #     "logreg": {"C": [0.01, 0.1, 1], "penalty": ["l2"], "solver": ["lbfgs"]},
-    #     "rf": {"n_estimators": [100, 200], "max_depth": [10, 20]}
-    # }
-    # run_grid_search_experiment(config, custom_param_grids=custom_grids)
+    # Execute the main entry point function
+    main()

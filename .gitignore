@@ -12,7 +12,28 @@ wheels/
 # Virtual environments
 .venv
 
-data/
+# Hydra outputs
+outputs/
+
+# Ruff cache
+.ruff_cache/
+
+# mypy cache
+.mypy_cache/
+
+# Pyre type checker cache
+.pyre/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.nox/
+.tox/
+.pytest_cache/
+
+# Data directory
+/data/
 
 # Mapref data
 data_preprocessing/mapref_data/otus_97_to_dna.parquet
@@ -29,12 +50,12 @@ data_preprocessing/dna_embeddings/*
 # Microbiome embeddings - ignore all contents except .gitkeep
 data_preprocessing/microbiome_embeddings/*
 !data_preprocessing/microbiome_embeddings/.gitkeep
+data_preprocessing/datasets_preprocessing_scripts/diabimmune/preprocessing_scripts/preprocessed_diabimmune_longitudinal
 
-# Content of datasets folder
-data_preprocessing/datasets/diabimmune/*
-data_preprocessing/datasets/goldberg/*
-data_preprocessing/datasets/tanaka/*
-data_preprocessing/datasets/gadir/*
+# HuggingFace datasets
+huggingface_datasets/
 
 # Evaluation results
 eval_results/
+
+deepmicro/

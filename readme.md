@@ -40,12 +40,33 @@ The project follows a modular structure to separate concerns and facilitate coll
 | `data_preprocessing/dna_sequences/` | Generated DNA sequence CSVs (one per sample). |
 | `data_preprocessing/dna_embeddings/` | Generated ProkBERT embeddings (H5 format). |
 | `data_preprocessing/microbiome_embeddings/` | Generated MicrobiomeTransformer embeddings (H5 format). |
+| `huggingface_datasets/` | HuggingFace datasets with metadata and processed embeddings. |
 | `modules/` | Core model classes: `MicrobiomeTransformer` and `SKClassifier`. |
 | `utils/` | Helper utilities for data preparation and evaluation. |
 | `data_loading.py` | Unified data loading pipeline with automatic artifact generation. |
 | `generate_embeddings.py` | Standalone script for batch embedding generation. |
+| `create_unified_embeddings.py` | Script to merge all embeddings into unified files per dataset. |
+| `example_unified_embeddings.py` | Examples showing how to use unified embeddings. |
 | `main.py` | Main execution script for training and evaluation. |
 | `config.yaml` | Centralized configuration file for all parameters. |
+
+## Custom Sample Subsets
+
+You can create custom sample subsets without recomputing embeddings. Simply:
+
+1. Create a CSV file with your desired samples (must have `sid` and `label` columns)
+2. Place it in `huggingface_datasets/{DatasetName}/metadata/your_custom_file.csv`
+3. Update `config.yaml` to point to your custom file:
+   ```yaml
+   data:
+     use_unified_embeddings: true
+     hugging_face:
+       dataset_name: "Diabimmune"
+       csv_filename: "your_custom_file.csv"
+   ```
+4. Run `python main.py` as usual
+
+**Note:** If auto-downloading datasets from HuggingFace, unified embeddings are already included. Otherwise, run `python create_unified_embeddings.py --dataset all` once to merge embeddings.
 
 ## Getting Started
 
@@ -85,6 +106,13 @@ You need three types of files to run the pipeline:
     - Files: `samples-otus-97.parquet`, `otus_97_to_dna.parquet`
     - Place in: `data_preprocessing/mapref_data/`
 
+#### Option: Download Pre-generated Embeddings (Skip Embedding Pipeline)
+
+Just execute `python main.py` as suggested in the lower sections. The script is updated to automatically pull the datasets from HuggingFace and place them in appropriate folders.
+When running the script, make sure to set the `csv_filename` argument to a valid csv file for that dataset (an error will be thrown otherwise).
+
+**Note:** With preprocessed embeddings, you can skip directly to [Step 2: Train and Evaluate](#step-2-train-and-evaluate) without running the embedding generation pipeline.
+
 #### Directory Structure
 
 After setup, your directory should look like this:
@@ -119,10 +147,10 @@ Edit `config.yaml` to configure your experiment:
 data:
   # Point to your dataset
   dataset_path: "data_preprocessing/datasets/diabimmune/Month_2.csv"
-  
+
   # Model checkpoint (downloaded above)
-  mirobiome_transformer_checkpoint: "data/checkpoint_epoch_0_final_epoch3_conf00.pt"
-  
+  microbiome_transformer_checkpoint: "data/checkpoint_epoch_0_final_epoch3_conf00.pt"
+
   # Device: "cpu", "cuda", or "mps"
   device: "cpu"
 
@@ -144,9 +172,9 @@ See `config.yaml` for all available options including hyperparameter grids.
 
 The pipeline can generate embeddings automatically or you can pre-generate them for better control and performance.
 
-#### Option A: Automatic Generation (Quick Start)
+#### Option A: Automatic Download (Quick Start)
 
-When you run `main.py`, the pipeline automatically generates any missing embeddings. The first run will be slow, but subsequent runs use cached embeddings.
+When you run `main.py`, the pipeline automatically downloads the embeddings for the selected dataset.
 
 ```bash
 python main.py
@@ -197,62 +225,259 @@ python generate_embeddings.py
 
 ### Step 2: Train and Evaluate
 
-Run the main pipeline using `main.py`. There are several modes available:
+Since the `main.py` script is now equipped to download automatically the datasets from HuggingFace, here is what you need to know about the config:
+
+```yaml
+# Data path
+data:
+  # Other params like before
+  device: "cpu"  # cpu, cuda, or mps
+  hugging_face:
+    download_path: "huggingface_datasets"
+    dataset_name: "Tanaka" # e.g., "Diabimmune", "Goldberg", "Gadir"
+    base_repo_url: "https://huggingface.co/datasets/hugging-science"
+    pull_from_huggingface: true
+    csv_filename: "month_2.csv" # e.g., "Month_2.csv" for Diabimmune, "T1.csv" for Goldberg, "gadir_all_months.csv" for Gadir
+
+```
+- `download_path` - Folder where the datasets will be downloaded.
+- `dataset_name` - Dataset name you wish to pull from HF.
+- `base_repo_url` - Base repo for the uploaded datasets.
+- `pull_from_huggingface` - Whether you wish to use local files or pull from HF (recommended to pull from HF)
+- `csv_filename` - The CSV you wish to work with. Please note that HF pull will download the entire dataset at once.
+
+If the datasets are pulled once, they are skipped the next time. You can change the `csv_filename` if you wish to work with other months.
+Once the datasets are pulled from HuggingFace, they should look like below:
+
+```bash
+./huggingface_datasets/
+├── Diabimmune
+│   ├── metadata
+│   ├── processed
+│   └── README.md
+├── Gadir
+│   ├── metadata
+│   ├── processed
+│   └── README.md
+├── Goldberg
+│   ├── metadata
+│   ├── processed
+│   └── README.md
+└── Tanaka
+    ├── metadata
+    ├── processed
+    └── README.md
+```
+- `metadata/` - Folder contains the labels CSV files.
+- `processed/` - Folder contains the `dna_embeddings`, `dna_sequences` and `microbiome_embeddings` as usual.
+
+
+## Running Experiments
+
+Run the main pipeline using `main.py` with Hydra config management. All behavior is controlled via CLI arguments and config files - **no code editing required**.
+
+### Basic Usage
+
+#### Select Dataset
+```bash
+# Run with specific dataset (default: tanaka)
+python main.py datasets=gadir
+
+# Or use other datasets
+python main.py datasets=diabimmune
+python main.py datasets=goldberg
+python main.py datasets=tanaka
+```
+
+#### Enable Experiment Tracking
+```bash
+# Enable tracking to Hugging Face spaces
+python main.py datasets=gadir tracking.enabled=True
+
+# Tracking project and space_id are auto-generated from dataset name
+# Override if needed:
+python main.py datasets=gadir tracking.enabled=True tracking.space_id="custom/space-id"
+```
+
+### Evaluation Modes
 
 #### Mode 1: Simple Evaluation (No Hyperparameter Tuning)
 
-Evaluate a single classifier with default parameters:
-
-```python
-# In main.py, uncomment:
-run_evaluation(config)
-```
-
-Run:
+Evaluate classifiers with default parameters from `configs/model/model.yaml`:
 ```bash
-python main.py
+# Single classifier
+python main.py datasets=gadir model.classifier=[logreg]
+
+# Multiple classifiers
+python main.py datasets=gadir model.classifier=[logreg,rf,svm,mlp]
 ```
 
-#### Mode 2: Compare Multiple Classifiers
+#### Mode 2: Grid Search with Unbiased Evaluation (Recommended)
 
-Evaluate multiple classifiers to compare performance:
-
-```python
-# In main.py, uncomment:
-run_evaluation(config, classifiers=["logreg", "rf", "svm", "mlp"])
+Perform hyperparameter tuning with proper two-stage evaluation:
+```bash
+# Run grid search for all classifiers
+python main.py datasets=gadir model.classifier=[logreg,rf,svm,mlp]
 ```
 
-#### Mode 3: Grid Search with Unbiased Evaluation (Recommended)
+**Two-stage approach:**
+1. **Inner CV (Grid Search)**: Find best hyperparameters using 5-fold CV
+2. **Outer CV (Final Eval)**: Evaluate best model on independent 5-fold CV
 
-Perform hyperparameter tuning with proper evaluation:
+This prevents optimistic bias from hyperparameter leakage.
 
-```python
-# In main.py, uncomment:
-run_grid_search_experiment(config, classifiers=["logreg", "rf", "svm", "mlp"])
+#### Mode 3: Evaluation Only (No Training)
+
+Load existing models and evaluate:
+```bash
+python main.py datasets=gadir mode.eval_only=True
 ```
 
-This uses a two-stage approach:
-1. **Grid Search** (inner CV) - Find best hyperparameters using 5-fold CV with random_state=42
-2. **Final Evaluation** (outer CV) - Evaluate best model on fresh 5-fold CV with random_state=123
+#### Mode 4: Train/Test Split Evaluation
 
-This prevents optimistic bias when you don't have a held-out test set.
+Instead of evaluating on the full dataset with cross-validation, you can hold out a test set. The split behavior is controlled by the `evaluation.split.mode` setting:
 
-#### Mode 4: Custom Hyperparameter Grid
+| Split Mode | Description |
+| :--- | :--- |
+| `none` | No train/test split. Uses full dataset with cross-validation (default). |
+| `auto` | Automatically split the dataset into train/test using stratified sampling. |
+| `manual` | Use pre-defined train/test CSV files. |
 
-Override the config with custom hyperparameters:
+**Auto split** — the dataset is automatically split into train and test using stratified sampling that preserves class balance:
 
-```python
-custom_grids = {
-    "logreg": {"C": [0.01, 0.1, 1], "penalty": ["l2"], "solver": ["lbfgs"]},
-    "rf": {"n_estimators": [100, 200], "max_depth": [10, 20]}
-}
-run_grid_search_experiment(config, custom_param_grids=custom_grids)
+```bash
+# Auto split with default 70/30 ratio
+python main.py datasets=tanaka evaluation.split.mode=auto
+
+# Custom split ratio and seed
+python main.py datasets=tanaka evaluation.split.mode=auto \
+    evaluation.split.auto.test_size=0.2 \
+    evaluation.split.auto.random_state=42
+
+# Eval only (no grid search) — useful when hyperparams are already known
+python main.py datasets=tanaka evaluation.split.mode=auto mode.eval_only=true
 ```
+
+**Manual split** — provide two separate CSV files for train and test:
+
+```bash
+python main.py evaluation.split.mode=manual \
+    evaluation.split.manual.train_dataset_path=data/train.csv \
+    evaluation.split.manual.test_dataset_path=data/test.csv
+```
+
+Manual mode includes automatic validation checks:
+- Schema alignment (same columns in both files)
+- Data leakage detection (no overlapping sample IDs)
+- Label distribution comparison (warns if distributions differ significantly)
+
+**Behavior summary:**
+
+| `split.mode` | `eval_only` | What happens |
+| :--- | :--- | :--- |
+| `none` | `false` | Default: GridSearchCV + final CV on full dataset |
+| `none` | `true` | Simple k-fold CV on full dataset |
+| `auto` | `false` | GridSearchCV on train set + holdout test evaluation |
+| `auto` | `true` | Fit on train set + holdout test evaluation (no grid search) |
+| `manual` | `false` | GridSearchCV on train set + holdout test evaluation |
+| `manual` | `true` | Fit on train set + holdout test evaluation (no grid search) |
+
+**Config reference** (`configs/base.yaml`):
+
+```yaml
+evaluation:
+  split:
+    # Split mode: "none", "auto", or "manual"
+    mode: "none"
+    auto:
+      test_size: 0.3           # fraction held out for testing
+      random_state: 20260101   # seed for reproducible splits
+    manual:
+      train_dataset_path: null # path to train CSV
+      test_dataset_path: null  # path to test CSV
+```
+
+### Advanced Usage
+
+#### Override Hyperparameter Grids
+
+Modify search space via CLI:
+```bash
+# Override specific classifier params
+python main.py datasets=gadir \
+  model.param_grids.logreg.C=[0.01,0.1,1] \
+  model.param_grids.rf.n_estimators=[100,200]
+```
+
+#### Customize Evaluation Settings
+```bash
+# Change CV folds
+python main.py datasets=gadir evaluation.cv_folds=10
+
+# Change scoring metric
+python main.py datasets=gadir evaluation.grid_search_scoring="f1"
+
+# Set random seeds for reproducibility
+python main.py datasets=gadir \
+  evaluation.grid_search_random_state=42 \
+  evaluation.final_eval_random_state=123
+```
+
+#### View Current Config
+
+Verify your config without running experiments:
+```bash
+# Print full resolved config
+python main.py datasets=gadir --cfg job
+
+# Print only specific sections
+python main.py datasets=gadir --cfg job --package data
+```
+
+### Common Workflows
+
+**Quick experiment on new dataset:**
+```bash
+python main.py datasets=gadir model.classifier=[logreg,rf] tracking.enabled=True
+```
+
+**Full evaluation with tracking:**
+```bash
+python main.py datasets=diabimmune \
+  model.classifier=[logreg,rf,svm,mlp] \
+  tracking.enabled=True \
+  tracking.tags=[diabimmune,production,full-grid]
+```
+
+**Debug with single classifier:**
+```bash
+python main.py datasets=tanaka \
+  model.classifier=[logreg] \
+  evaluation.cv_folds=2
+```
+
+### Config Structure
+```
+configs/
+├── base.yaml           # Base settings, tracking templates
+├── data/
+│   └── data.yaml      # Data paths, embedding settings
+├── datasets/          # Dataset-specific configs
+│   ├── diabimmune.yaml
+│   ├── gadir.yaml
+│   ├── goldberg.yaml
+│   └── tanaka.yaml
+└── model/
+    └── model.yaml     # Classifier configs and param grids
+```
+
+**No code editing needed** - control everything via config files and CLI overrides.
+
 
 ### Step 3: View Results
 
 Results are saved to `eval_results/<dataset_name>/<timestamp>/`:
-
+Dataset names are automatically infered from the HF pull config setup.
 ```text
 eval_results/
 └── diabimmune/

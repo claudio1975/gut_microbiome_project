@@ -1,0 +1,8 @@
+# @package data
+_target_dataset_name: "goldberg"
+
+dataset_path: "data_preprocessing/datasets/goldberg/all_groups.csv"
+
+hugging_face:
+  dataset_name: "Goldberg"
+  csv_filename: "all_groups_balanced.csv"
